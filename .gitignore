@@ -1,0 +1,15 @@
+# deps
+node_modules/
+.next/
+out/
+convex/_generated/
+
+# env — never commit keys
+.env
+.env.local
+.env.production
+.env*.local
+
+# misc
+.DS_Store
+*.pem
