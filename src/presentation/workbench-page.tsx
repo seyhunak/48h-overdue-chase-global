@@ -10,22 +10,22 @@ import { buildChaseSequence, parseCsv, validateInvoiceRow, type Invoice } from "
 import { getConvexUrl, getClerkPublishableKey } from "@/infrastructure/env";
 import { ReminderDispatchSection } from "@/presentation/reminders-section";
 
-const SAMPLE_CSV = `clientName,invoiceId,amount,currency,dueDate,email
-Acme Corp,INV-001,1200,USD,2026-07-01,ap@acme-corp.example
-Globex,INV-002,850.5,USD,2026-07-05,finance@globex.example
-Initech,INV-003,4300,EUR,2026-07-10,accounts@initech.example
-Umbrella Co,INV-004,975,USD,2026-07-12,billing@umbrella-co.example
-Hooli,INV-005,2500,USD,2026-07-15,ap@hooli.example
-Stark Industries,INV-006,11200,USD,2026-07-18,finance@stark-industries.example
-Wayne Enterprises,INV-007,640,GBP,2026-07-20,accounts@wayne-enterprises.example
-Massive Dynamic,INV-008,1890,USD,2026-07-22,ap@massive-dynamic.example
-Cyberdyne,INV-009,3300,USD,2026-07-25,billing@cyberdyne.example
-Tyrell Corp,INV-010,720,EUR,2026-07-28,finance@tyrell-corp.example`;
+const SAMPLE_CSV = `clientName,invoiceId,amount,currency,dueDate,email,phone
+Acme Corp,INV-001,1200,USD,2026-07-01,ap@acme-corp.example,+14155550101
+Globex,INV-002,850.5,USD,2026-07-05,finance@globex.example,
+Initech,INV-003,4300,EUR,2026-07-10,accounts@initech.example,+493055501200
+Umbrella Co,INV-004,975,USD,2026-07-12,billing@umbrella-co.example,
+Hooli,INV-005,2500,USD,2026-07-15,ap@hooli.example,+14155550188
+Stark Industries,INV-006,11200,USD,2026-07-18,finance@stark-industries.example,
+Wayne Enterprises,INV-007,640,GBP,2026-07-20,accounts@wayne-enterprises.example,
+Massive Dynamic,INV-008,1890,USD,2026-07-22,ap@massive-dynamic.example,
+Cyberdyne,INV-009,3300,USD,2026-07-25,billing@cyberdyne.example,+14155550234
+Tyrell Corp,INV-010,720,EUR,2026-07-28,finance@tyrell-corp.example,`;
 
 function toCsv(rows: Invoice[]): string {
-  const header = "clientName,invoiceId,amount,currency,dueDate,email,daysOverdue,status";
+  const header = "clientName,invoiceId,amount,currency,dueDate,email,phone,daysOverdue,status";
   const lines = rows.map((r) =>
-    [r.clientName, r.invoiceId, String(r.amount), r.currency, r.dueDate, r.email, String(r.daysOverdue), r.status].join(","),
+    [r.clientName, r.invoiceId, String(r.amount), r.currency, r.dueDate, r.email, r.phone ?? "", String(r.daysOverdue), r.status].join(","),
   );
   return [header, ...lines].join("\n");
 }
@@ -93,6 +93,8 @@ function WorkbenchInner() {
   const [raw, setRaw] = useState("");
   const [selectedInvoiceId, setSelectedInvoiceId] = useState<string | null>(null);
   const [chasedIds, setChasedIds] = useState<string[]>([]);
+  // Collapse/expand state for the sequence preview. First step open by default.
+  const [openSteps, setOpenSteps] = useState<Record<string, boolean>>({ "pre-due": true });
 
   const parsed = useMemo(() => {
     if (!raw) return { valid: [] as Invoice[], errors: [] as string[] };
@@ -156,6 +158,7 @@ function WorkbenchInner() {
   const selectedInvoice: Invoice | null =
     parsed.valid.find((v) => v.invoiceId === selectedInvoiceId) ?? parsed.valid[0] ?? null;
   const seq = selectedInvoice ? buildChaseSequence(selectedInvoice) : [];
+  const allOpen = seq.length > 0 && seq.every((s) => openSteps[s.key] ?? false);
   const isAlreadyChased =
     parsed.valid.length > 0 &&
     chasedIds.length > 0 &&
@@ -174,6 +177,14 @@ function WorkbenchInner() {
     setChasedIds([]);
   }
 
+  function toggleStep(key: string) {
+    setOpenSteps((prev) => ({ ...prev, [key]: !(prev[key] ?? false) }));
+  }
+
+  function setAllSteps(open: boolean) {
+    setOpenSteps(Object.fromEntries(seq.map((s) => [s.key, open])));
+  }
+
   async function handleChase() {
     await ensureCredits({ clerkId: user!.id });
     await consumeCredits({ clerkId: user!.id, amount: parsed.valid.length });
@@ -189,6 +200,7 @@ function WorkbenchInner() {
         currency: inv.currency,
         recipientEmail: inv.email || undefined,
         email: inv.email || undefined,
+        phone: inv.phone || undefined,
       });
     }
     setChasedIds(parsed.valid.map((v) => v.invoiceId));
@@ -323,12 +335,54 @@ function WorkbenchInner() {
             </select>
           </label>
         )}
-        {seq.map((s) => (
-          <div key={s.key} className="code-card mt-3 p-3 text-sm">
-            <div className="font-semibold"><span className="tok-key">[{s.key}]</span> <span className="tok-str">{s.subject}</span></div>
-            <pre className="tok-dim mt-1 whitespace-pre-wrap">{s.body}</pre>
+        {seq.length > 0 && (
+          <div className="mt-2 flex items-center gap-3">
+            <button
+              type="button"
+              onClick={() => setAllSteps(!allOpen)}
+              className="text-sm underline"
+              style={{ color: "var(--color-muted)" }}
+            >
+              {allOpen ? "Collapse all" : "Expand all"}
+            </button>
+            <span className="text-sm" style={{ color: "var(--color-muted)" }}>
+              {Object.values(openSteps).filter(Boolean).length}/{seq.length} steps shown
+            </span>
+            {selectedInvoice && (
+              <span className="text-sm" style={{ color: "var(--color-muted)" }}>
+                Templates for {selectedInvoice.clientName} · {selectedInvoice.invoiceId}
+              </span>
+            )}
           </div>
-        ))}
+        )}
+        {seq.map((s) => {
+          const open = openSteps[s.key] ?? false;
+          return (
+            <div key={s.key} className="code-card mt-3 p-3 text-sm">
+              <button
+                type="button"
+                onClick={() => toggleStep(s.key)}
+                aria-expanded={open}
+                className="flex w-full items-center gap-2 text-left"
+              >
+                <span
+                  className="inline-block text-xs transition-transform"
+                  style={{
+                    color: "var(--color-muted)",
+                    transform: open ? "rotate(90deg)" : "rotate(0deg)",
+                  }}
+                >
+                  ▶
+                </span>
+                <span className="font-semibold">
+                  <span className="tok-key">[{s.key}]</span>{" "}
+                  <span className="tok-str">{s.subject}</span>
+                </span>
+              </button>
+              {open && <pre className="tok-dim mt-1 whitespace-pre-wrap">{s.body}</pre>}
+            </div>
+          );
+        })}
         {seq.length === 0 && <p className="text-sm" style={{ color: "var(--color-muted)" }}>Upload rows to preview.</p>}
       </div>
 

@@ -30,6 +30,7 @@ export const record = mutation({
     dueDate: v.optional(v.string()),
     currency: v.optional(v.string()),
     recipientEmail: v.optional(v.string()),
+    phone: v.optional(v.string()),
     email: v.optional(v.string()),
   },
   handler: async (ctx: any, args: any) => {

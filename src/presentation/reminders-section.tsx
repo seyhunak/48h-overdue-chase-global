@@ -39,6 +39,10 @@ export function ReminderDispatchSection({ userId }: { userId: string }) {
     ownerClerkId: userId,
     limit: 50,
   }) as Reminder[] | undefined;
+  const decisions = useQuery((api as any).reminders.listDecisions, {
+    ownerClerkId: userId,
+    limit: 20,
+  }) as Array<{ _id: string }> | undefined;
 
   const doSetScheduler = useMutation((api as any).reminders.setScheduler);
   const doSweep = useMutation((api as any).reminders.runDueSweepForOwner);
@@ -86,7 +90,8 @@ export function ReminderDispatchSection({ userId }: { userId: string }) {
     setRowError((m) => ({ ...m, [r._id]: "" }));
     setRowOk((m) => ({ ...m, [r._id]: "" }));
     markBusy(r._id, true);
-    const channel = "email";
+    // The queue's own channel is authoritative (the send route re-validates).
+    const channel = r.channel === "sms" || r.channel === "push" ? r.channel : "email";
     try {
       await doApprove({ ownerClerkId: userId, reminderId: r._id });
       const res = await fetch("/api/reminders/send", {
@@ -197,7 +202,7 @@ export function ReminderDispatchSection({ userId }: { userId: string }) {
                   <td className="max-w-[280px] truncate" title={r.subject}>
                     {r.subject}
                   </td>
-                  <td>email</td>
+                  <td>{r.channel ?? "email"}</td>
                   <td>{fmtUtc(r.scheduledFor)}</td>
                   <td>
                     <div className="flex flex-wrap items-center gap-2 py-1">
@@ -235,6 +240,48 @@ export function ReminderDispatchSection({ userId }: { userId: string }) {
             </tbody>
           </table>
         </div>
+      )}
+
+      <h3 className="mono-label mt-5" style={{ color: "var(--color-muted)" }}>
+        Recent sweep decisions
+      </h3>
+      <p className="mt-1 text-xs" style={{ color: "var(--color-muted)" }}>
+        What the intelligent sweep decided per invoice — queue a reminder (email/SMS) or do nothing, and why. Decisions never send; sending still needs your approval above.
+      </p>
+      {decisions === undefined && (
+        <p className="mt-2 text-sm" style={{ color: "var(--color-muted)" }}>
+          Loading decisions…
+        </p>
+      )}
+      {decisions !== undefined && decisions.length === 0 && (
+        <p className="mt-2 text-sm" style={{ color: "var(--color-muted)" }}>
+          No sweep decisions yet — run a sweep.
+        </p>
+      )}
+      {decisions !== undefined && decisions.length > 0 && (
+        <ul className="tnum mt-2 text-sm" style={{ color: "var(--color-muted)" }}>
+          {decisions.map((d: any) => (
+            <li key={d._id}>
+              <span
+                style={{
+                  color:
+                    d.action === "queue"
+                      ? d.channel === "sms"
+                        ? "var(--color-warning)"
+                        : "var(--color-ok)"
+                      : "var(--color-muted)",
+                  fontWeight: 600,
+                }}
+              >
+                {d.action === "queue" ? `queue ${d.channel}` : "do nothing"}
+              </span>{" "}
+              · {d.invoiceId}
+              {d.stepKey ? ` · ${d.stepKey}` : ""} · {d.reason}
+              {d.detail ? ` — ${d.detail}` : ""}
+              <span style={{ opacity: 0.7 }}> · {fmtUtc(d.createdAt)}</span>
+            </li>
+          ))}
+        </ul>
       )}
 
       <h3 className="mono-label mt-5" style={{ color: "var(--color-muted)" }}>

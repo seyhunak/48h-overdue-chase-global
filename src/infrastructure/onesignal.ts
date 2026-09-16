@@ -1,7 +1,9 @@
-// Infrastructure — OneSignal multichannel dispatch (SERVER ONLY).
-// Never import this module from client components. The API keys are resolved
-// per-owner from Convex settings with process.env fallback.
-// Missing keys throw so route handlers can respond 503.
+// Infrastructure — OneSignal REST dispatch (SERVER ONLY).
+// Direct path: used as the env-configured fallback when an owner has not
+// connected OneSignal through Composio in /connect. The preferred path is
+// infrastructure/composio.ts (Composio ONESIGNAL_REST_API toolkit), which
+// needs no OneSignal key on this server at all.
+// Never import this module from client components.
 // Nothing here runs at build time (fetch is evaluated at request runtime).
 
 export type Channel = "email" | "sms" | "push";
@@ -10,7 +12,7 @@ export const CHANNELS: Channel[] = ["email", "sms", "push"];
 
 export class MissingOneSignalConfigError extends Error {
   readonly status = 503;
-  constructor(message = "OneSignal not configured (missing app_id or api_key)") {
+  constructor(message = "OneSignal not configured — connect it in /connect or set ONESIGNAL_APP_ID + ONESIGNAL_API_KEY") {
     super(message);
     this.name = "MissingOneSignalConfigError";
   }
@@ -64,8 +66,6 @@ async function onesignalRequest(
 }
 
 async function sendEmail(opts: {
-  appId: string;
-  apiKey: string;
   to: string;
   subject: string;
   body: string;
@@ -89,8 +89,6 @@ async function sendEmail(opts: {
 }
 
 async function sendSms(opts: {
-  appId: string;
-  apiKey: string;
   to: string;
   body: string;
 }): Promise<{ id: string }> {
@@ -114,8 +112,6 @@ async function sendSms(opts: {
 }
 
 async function sendPush(opts: {
-  appId: string;
-  apiKey: string;
   to: string;
   subject: string;
   body: string;
@@ -163,5 +159,3 @@ export async function dispatchViaOneSignal(opts: {
 export function requireOneSignalKeysAtRuntime(): { appId: string; apiKey: string } {
   return requireOneSignalKeys();
 }
-
-export const CHANNELS = ["email", "sms", "push"] as const;

@@ -1,5 +1,6 @@
 import { internalMutation, mutation, query } from "./_generated/server";
 import { v } from "convex/values";
+import { decideSweepAction } from "./sweepDecide";
 
 // Reminder / nudge dispatch policy (enforced in code, single source of truth):
 // - max 1 touch / invoice / day (checked via invoiceState.lastTouchAt, UTC day)
@@ -72,12 +73,25 @@ async function getStateRow(ctx: any, ownerClerkId: string, invoiceId: string) {
   return rows.find((r: any) => r.invoiceId === invoiceId) ?? null;
 }
 
-async function findReminderForStep(ctx: any, ownerClerkId: string, invoiceId: string, stepKey: string) {
+async function findReminderForStep(
+  ctx: any,
+  ownerClerkId: string,
+  invoiceId: string,
+  stepKey: string,
+  channel?: string,
+) {
   const rows = await ctx.db
     .query("reminders")
     .withIndex("by_owner", (q: any) => q.eq("ownerClerkId", ownerClerkId))
     .collect();
-  return rows.find((r: any) => r.invoiceId === invoiceId && r.stepKey === stepKey) ?? null;
+  return (
+    rows.find(
+      (r: any) =>
+        r.invoiceId === invoiceId &&
+        r.stepKey === stepKey &&
+        (channel ? (r.channel ?? "email") === channel : true),
+    ) ?? null
+  );
 }
 
 // Ladder boundary -> which step is due for an invoice right now.
@@ -124,6 +138,29 @@ function buildStepCopy(stepKey: string, clientName: string, invoiceId: string, a
   }
 }
 
+// SMS escalation copy: short, urgent, opt-out footer. The subject doubles as
+// the audit title (OneSignal ignores headings for SMS).
+function buildSmsCopy(stepKey: string, clientName: string, invoiceId: string, amount: number, currency: string) {
+  const amt = `${currency} ${amount.toFixed(2)}`;
+  switch (stepKey) {
+    case "+14":
+      return {
+        subject: `Overdue 14 days: invoice ${invoiceId} (SMS)`,
+        body: `Hi ${clientName}: invoice ${invoiceId} (${amt}) is 14 days overdue. Please pay within 3 business days or reply with a date. Reply STOP to opt out.`,
+      };
+    case "+30":
+      return {
+        subject: `Final notice: invoice ${invoiceId} (SMS)`,
+        body: `FINAL NOTICE: invoice ${invoiceId} (${amt}) is 30 days overdue. This is the last reminder before escalation/collections. Reply STOP to opt out.`,
+      };
+    default:
+      return {
+        subject: `Overdue: invoice ${invoiceId} (SMS)`,
+        body: `Hi ${clientName}: invoice ${invoiceId} (${amt}) is overdue. Please reply with a payment date. Reply STOP to opt out.`,
+      };
+  }
+}
+
 // Tracked-invoice source: submissions (workbench chase writes). Dedupe by
 // invoiceId, newest row wins for amount/dueDate/clientName/email.
 async function getTrackedInvoices(ctx: any, ownerClerkId: string) {
@@ -151,6 +188,31 @@ async function sweepOwner(ctx: any, ownerClerkId: string, nowMs: number): Promis
   const endH = settings?.sendWindowEnd ?? DEFAULT_WINDOW_END;
   const tracked = await getTrackedInvoices(ctx, ownerClerkId);
   const result: SweepResult = { queued: 0, skipped: [] };
+  // Past reminders per invoice — the "past actions" input for the decision
+  // engine (sent/failed channels, attempts, timestamps).
+  const allReminders = await ctx.db
+    .query("reminders")
+    .withIndex("by_owner", (q: any) => q.eq("ownerClerkId", ownerClerkId))
+    .collect();
+  const byInvoice = new Map<string, any[]>();
+  for (const r of allReminders) {
+    if (typeof r.invoiceId !== "string" || !r.invoiceId) continue;
+    const list = byInvoice.get(r.invoiceId) ?? [];
+    list.push(r);
+    byInvoice.set(r.invoiceId, list);
+  }
+  // Per-sweep decision log (queue + do-nothing), written at the end.
+  const pendingDecisions: Array<{
+    invoiceId: string;
+    clientName?: string;
+    amount?: number;
+    currency?: string;
+    stepKey?: string;
+    action: "queue" | "none";
+    channel: "email" | "sms" | "none";
+    reason: string;
+    detail?: string;
+  }> = [];
   for (const sub of tracked) {
     const invoiceId: string = sub.invoiceId;
     const clientName: string = sub.clientName ?? "";
@@ -166,6 +228,13 @@ async function sweepOwner(ctx: any, ownerClerkId: string, nowMs: number): Promis
           : "";
     const due = new Date(dueDateStr);
     if (!dueDateStr || Number.isNaN(due.getTime())) {
+      pendingDecisions.push({
+        invoiceId,
+        clientName,
+        action: "none",
+        channel: "none",
+        reason: "invalid dueDate",
+      });
       result.skipped.push({ invoiceId, reason: "invalid dueDate" });
       continue;
     }
@@ -177,34 +246,71 @@ async function sweepOwner(ctx: any, ownerClerkId: string, nowMs: number): Promis
     );
     const stepKey = stepForDiff(Math.floor((nowMidnight - dueMidnight) / 86400000));
     if (!stepKey) {
+      pendingDecisions.push({
+        invoiceId,
+        clientName,
+        amount,
+        currency,
+        action: "none",
+        channel: "none",
+        reason: "no ladder step due",
+      });
       result.skipped.push({ invoiceId, reason: "no ladder step due" });
       continue;
     }
     const state = await getStateRow(ctx, ownerClerkId, invoiceId);
-    if (state?.paid) {
-      result.skipped.push({ invoiceId, reason: "paid" });
+    const emailExisting = await findReminderForStep(ctx, ownerClerkId, invoiceId, stepKey, "email");
+    const smsExisting = await findReminderForStep(ctx, ownerClerkId, invoiceId, stepKey, "sms");
+    // ---- Intelligent decision (engine is the single decider: safety gates,
+    // channel choice, and "do nothing" all live in convex/sweepDecide.ts) ----
+    const past = (byInvoice.get(invoiceId) ?? []).map((r: any) => ({
+      stepKey: r.stepKey,
+      status: r.status,
+      channel: r.channel ?? null,
+      attempts: typeof r.attempts === "number" ? r.attempts : 0,
+      lastError: typeof r.lastError === "string" ? r.lastError : null,
+      sentAt: typeof r.sentAt === "number" ? r.sentAt : null,
+      createdAt: typeof r.createdAt === "number" ? r.createdAt : null,
+    }));
+    const phoneRaw = typeof (sub as any).phone === "string" ? (sub as any).phone : "";
+    const decision = decideSweepAction({
+      stepKey,
+      amount,
+      currency,
+      email: emailRaw,
+      phone: phoneRaw,
+      paid: Boolean(state?.paid),
+      unsubscribed: Boolean(state?.unsubscribed),
+      touches: state?.touches ?? 0,
+      lastTouchAt: state?.lastTouchAt ?? null,
+      emailQueued: Boolean(emailExisting),
+      smsQueued: Boolean(smsExisting),
+      pastReminders: past,
+      nowMs,
+    });
+    pendingDecisions.push({
+      invoiceId,
+      clientName,
+      amount,
+      currency,
+      stepKey,
+      action: decision.action,
+      channel: decision.channel,
+      reason: decision.reason,
+      detail: decision.detail,
+    });
+    if (decision.action !== "queue") {
+      result.skipped.push({ invoiceId, reason: decision.reason });
       continue;
     }
-    if (state?.unsubscribed) {
-      result.skipped.push({ invoiceId, reason: "unsubscribed" });
-      continue;
-    }
-    if ((state?.touches ?? 0) >= MAX_TOUCHES_PER_INVOICE) {
-      result.skipped.push({ invoiceId, reason: "max touches reached" });
-      continue;
-    }
-    if (state?.lastTouchAt && sameUtcDay(state.lastTouchAt, nowMs)) {
-      result.skipped.push({ invoiceId, reason: "already touched today" });
-      continue;
-    }
-    const existing = await findReminderForStep(ctx, ownerClerkId, invoiceId, stepKey);
-    if (existing) {
-      result.skipped.push({ invoiceId, reason: `duplicate step ${stepKey}` });
-      continue;
-    }
-    const copy = buildStepCopy(stepKey, clientName, invoiceId, amount, currency, dueDateStr);
+    const channel: "email" | "sms" = decision.channel === "sms" ? "sms" : "email";
+    const copy =
+      channel === "sms"
+        ? buildSmsCopy(stepKey, clientName, invoiceId, amount, currency)
+        : buildStepCopy(stepKey, clientName, invoiceId, amount, currency, dueDateStr);
     const payloadHash = await sha256Hex(copy.subject + copy.body);
     const recipientEmail = typeof emailRaw === "string" ? emailRaw.trim() : "";
+    const recipientPhone = typeof phoneRaw === "string" ? phoneRaw.trim() : "";
     await ctx.db.insert("reminders", {
       ownerClerkId,
       invoiceId,
@@ -213,7 +319,8 @@ async function sweepOwner(ctx: any, ownerClerkId: string, nowMs: number): Promis
       currency,
       dueDate: dueDateStr,
       recipientEmail,
-      channel: "email",
+      recipientPhone: recipientPhone || undefined,
+      channel,
       stepKey,
       subject: copy.subject,
       body: copy.body,
@@ -238,8 +345,25 @@ async function sweepOwner(ctx: any, ownerClerkId: string, nowMs: number): Promis
     }
     result.queued += 1;
   }
+  // Persist the decision audit trail (queue AND "do nothing" outcomes).
+  for (const d of pendingDecisions) {
+    await ctx.db.insert("decisions", { ownerClerkId, ...d, createdAt: nowMs });
+  }
   return result;
 }
+
+// Decision audit feed for /app: what the sweep decided per invoice and why.
+export const listDecisions = query({
+  args: { ownerClerkId: v.string(), limit: v.optional(v.number()) },
+  handler: async (ctx: any, args: any) => {
+    const rows = await ctx.db
+      .query("decisions")
+      .withIndex("by_owner", (q: any) => q.eq("ownerClerkId", args.ownerClerkId))
+      .order("desc")
+      .collect();
+    return rows.slice(0, Math.min(Math.max(args.limit ?? 30, 1), 100));
+  },
+});
 
 export const getPending = query({
   args: { ownerClerkId: v.string() },
@@ -663,8 +787,7 @@ export const resubscribe = mutation({
 });
 
 export const saveComposioSettings = mutation({
-  // DORMANT (email-only): kept for live-data compat, never called by UI.
-  // Email sends via Resend; no channel credentials are collected.
+  // Owner-owned Composio credentials (saved from /connect, key never echoed back).
   args: { ownerClerkId: v.string(), composioUser: v.string(), composioKey: v.string() },
   handler: async (ctx: any, args: any) => {
     const user = (args.composioUser ?? "").trim() || "default";
@@ -690,8 +813,35 @@ export const saveComposioSettings = mutation({
   },
 });
 
+export const saveOneSignalAppId = mutation({
+  // Owner-owned OneSignal App ID used as the app_id for every Composio
+  // ONESIGNAL_REST_API_CREATE_NOTIFICATION call made for this owner.
+  args: { ownerClerkId: v.string(), onesignalAppId: v.string() },
+  handler: async (ctx: any, args: any) => {
+    const appId = (args.onesignalAppId ?? "").trim();
+    if (!appId) throw new Error("onesignalAppId required");
+    if (/\s/.test(appId)) throw new Error("onesignalAppId must not contain spaces");
+    if (appId.length > 64) throw new Error("onesignalAppId too long");
+    const now = Date.now();
+    const existing = await getSettingsRow(ctx, args.ownerClerkId);
+    if (existing) {
+      await ctx.db.patch(existing._id, { onesignalAppId: appId, updatedAt: now });
+      return await ctx.db.get(existing._id);
+    }
+    const id = await ctx.db.insert("settings", {
+      ownerClerkId: args.ownerClerkId,
+      schedulerEnabled: false,
+      sendWindowStart: DEFAULT_WINDOW_START,
+      sendWindowEnd: DEFAULT_WINDOW_END,
+      onesignalAppId: appId,
+      updatedAt: now,
+    });
+    return await ctx.db.get(id);
+  },
+});
+
 export const setComposioVerified = mutation({
-  // DORMANT (email-only): verify-stamp writer kept for live-data compat, never called.
+  // Verify-stamp writer for /connect (owner connected ≥1 OneSignal account).
   args: { ownerClerkId: v.string(), verifiedAt: v.number() },
   handler: async (ctx: any, args: any) => {
     const now = Date.now();
@@ -713,8 +863,8 @@ export const setComposioVerified = mutation({
 });
 
 export const getComposioStatus = query({
-  // DORMANT (email-only): kept for live-data compat, never called by UI.
-  // /connect now reads Resend status from GET /api/connect/email-status.
+  // Owner-scoped connect status for /connect: stored key presence + App ID.
+  // Keys are never returned — only booleans / non-secret identifiers.
   args: { ownerClerkId: v.string() },
   handler: async (ctx: any, args: any) => {
     const row = await getSettingsRow(ctx, args.ownerClerkId);
@@ -724,6 +874,8 @@ export const getComposioStatus = query({
       hasKey: Boolean(row?.composioKey),
       composioUser: typeof row?.composioUser === "string" && row.composioUser ? row.composioUser : "default",
       composioVerifiedAt: typeof row?.composioVerifiedAt === "number" ? row.composioVerifiedAt : null,
+      hasAppId: Boolean(row?.onesignalAppId),
+      onesignalAppId: typeof row?.onesignalAppId === "string" ? row.onesignalAppId : "",
       preferredAccount: {
         whatsapp: typeof pref?.whatsapp === "string" ? pref.whatsapp : null,
         sms: typeof pref?.sms === "string" ? pref.sms : null,
@@ -734,7 +886,7 @@ export const getComposioStatus = query({
 });
 
 export const setPreferredAccounts = mutation({
-  // DORMANT (email-only): kept for live-data compat, never called by UI.
+  // Pins one connected account per channel (legacy map, unused by OneSignal flow).
   args: {
     ownerClerkId: v.string(),
     whatsapp: v.optional(v.string()),
@@ -776,7 +928,7 @@ export const setPreferredAccounts = mutation({
 });
 
 export const clearComposioConnection = mutation({
-  // DORMANT (email-only): kept for live-data compat, never called by UI.
+  // /connect "Disconnect": drops the owner's stored key + verify stamp.
   args: { ownerClerkId: v.string() },
   handler: async (ctx: any, args: any) => {
     const now = Date.now();
@@ -786,6 +938,7 @@ export const clearComposioConnection = mutation({
         composioKey: undefined,
         composioUser: undefined,
         composioVerifiedAt: undefined,
+        onesignalAppId: undefined,
         preferredAccount: undefined,
         updatedAt: now,
       });

@@ -1,8 +1,12 @@
 import { NextResponse } from "next/server";
 import { auth } from "@clerk/nextjs/server";
-import { dispatchViaOneSignal, MissingOneSignalConfigError, ChannelNotConfiguredError, PlayerNotRegisteredError } from "@/infrastructure/onesignal";
+import { loadOwnerConnectSettings } from "@/infrastructure/owner-settings";
+import { dispatchNotification } from "@/infrastructure/notify";
+import { MissingOneSignalAppIdError, ChannelNotConnectedError, OneSignalAuthError } from "@/infrastructure/composio";
+import { MissingOneSignalConfigError } from "@/infrastructure/onesignal";
 
 const VALID_CHANNELS = ["email", "sms", "push"] as const;
+type Channel = (typeof VALID_CHANNELS)[number];
 
 export async function POST(req: Request) {
   const { userId } = await auth();
@@ -34,44 +38,58 @@ export async function POST(req: Request) {
   const subject = body.subject?.trim() || "ClearDue test";
   const bodyText = body.body?.trim() || "Hi — this is your ClearDue test. OneSignal (email/sms/push) is connected. If you received this, your notification channel is ready for approved follow-ups.";
 
+  const settings = await loadOwnerConnectSettings(userId);
+
   try {
-    const { dispatchViaOneSignal } = await import("@/infrastructure/onesignal");
-    const sent = await dispatchViaOneSignal({
-      channel,
+    const sent = await dispatchNotification({
+      settings,
+      channel: channel as Channel,
       to,
       subject,
       body: bodyText,
     });
 
-    const { ConvexHttpClient } = await import("convex/browser");
-    const { api } = await import("../../../../../convex/_generated/api");
-    const client = new ConvexHttpClient(
-      (process.env.NEXT_PUBLIC_CONVEX_URL ?? "").replace(/\/+$/, ""),
-    );
-
-    await client.mutation((api as any).vault.add, {
-      ownerClerkId: userId,
-      kind: "test_send",
-      title: `Test send — ${channel}`,
-      payload: JSON.stringify({ channel, to, subject, body: bodyText, onesignalId: sent.id, test: true, timestamp: Date.now() }),
-    });
-
-    return NextResponse.json({ sent: true, channel, onesignalId: sent.id, test: true });
-  } catch (e: unknown) {
-    if (e instanceof MissingOneSignalConfigError) {
-      return NextResponse.json({ error: e.message }, { status: 503 });
-    }
-    if (e instanceof ChannelNotConfiguredError) {
-      return NextResponse.json({ error: e.message }, { status: 502 });
-    }
-    if (e instanceof PlayerNotRegisteredError) {
-      return NextResponse.json({ error: e.message }, { status: 502 });
-    }
-    let message = "send failed";
     try {
-      if (e instanceof Error) message = e.message?.slice(0, 1000) ?? "send failed";
-      else if (typeof e === "string") message = e.slice(0, 1000);
-    } catch {}
-    return NextResponse.json({ error: message }, { status: 502 });
+      const { ConvexHttpClient } = await import("convex/browser");
+      const { api } = await import("../../../../../convex/_generated/api");
+      const client = new ConvexHttpClient(
+        (process.env.NEXT_PUBLIC_CONVEX_URL ?? "").replace(/\/+$/, ""),
+      );
+      await client.mutation((api as any).vault.add, {
+        ownerClerkId: userId,
+        kind: "test_send",
+        title: `Test send — ${channel}`,
+        payload: JSON.stringify({
+          channel,
+          to,
+          subject,
+          body: bodyText,
+          via: sent.via,
+          onesignalId: sent.id,
+          connectedAccountId: sent.connectedAccountId ?? null,
+          test: true,
+          timestamp: Date.now(),
+        }),
+      });
+    } catch {
+      // Best effort audit: the send result is what matters.
+    }
+
+    return NextResponse.json({
+      sent: true,
+      channel,
+      via: sent.via,
+      onesignalId: sent.id,
+      test: true,
+    });
+  } catch (e: unknown) {
+    const status =
+      e instanceof MissingOneSignalConfigError || e instanceof MissingOneSignalAppIdError
+        ? 503
+        : e instanceof ChannelNotConnectedError || e instanceof OneSignalAuthError
+          ? 502
+          : 502;
+    const message = e instanceof Error && e.message ? e.message.slice(0, 1000) : "send failed";
+    return NextResponse.json({ error: message, channel }, { status });
   }
 }

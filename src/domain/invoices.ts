@@ -6,6 +6,7 @@ export type Invoice = {
   currency: string;
   dueDate: string;
   email: string;
+  phone?: string;
   daysOverdue: number;
   status: string;
 };
@@ -27,6 +28,7 @@ export function validateInvoiceRow(row: Record<string, string>): { invoice?: Inv
   const amount = Number(row.amount);
   const dueDate = (row.dueDate ?? row.due_date ?? "").trim();
   const email = (row.email ?? "").trim();
+  const phone = (row.phone ?? row.phoneNumber ?? "").trim();
   if (!clientName) return { error: "missing clientName" };
   if (!invoiceId) return { error: "missing invoiceId" };
   if (!Number.isFinite(amount) || amount <= 0) return { error: `invalid amount: ${row.amount}` };
@@ -43,6 +45,7 @@ export function validateInvoiceRow(row: Record<string, string>): { invoice?: Inv
       currency: (row.currency ?? "USD").trim() || "USD",
       dueDate,
       email,
+      phone: phone || undefined,
       daysOverdue,
       status: "overdue",
     },

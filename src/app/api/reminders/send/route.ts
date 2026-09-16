@@ -1,13 +1,17 @@
 import { NextResponse } from "next/server";
 import { auth } from "@clerk/nextjs/server";
-import { MissingOneSignalConfigError, ChannelNotConfiguredError, PlayerNotRegisteredError } from "@/infrastructure/onesignal";
+import { MissingOneSignalConfigError } from "@/infrastructure/onesignal";
+import { MissingOneSignalAppIdError, ChannelNotConnectedError, OneSignalAuthError } from "@/infrastructure/composio";
+import { loadOwnerConnectSettings } from "@/infrastructure/owner-settings";
+import { dispatchNotification } from "@/infrastructure/notify";
 
 const VALID_CHANNELS = ["email", "sms", "push"] as const;
 type Channel = (typeof VALID_CHANNELS)[number];
 
 // POST /api/reminders/send — OneSignal multichannel (email|sms|push).
 // Body: { reminderId: string; to?: string; channel?: "email" | "sms" | "push" }.
-// Default channel is "email". Invalid channel returns 400.
+// Dispatch goes through the owner's Composio → OneSignal connection when one is
+// saved in /connect, else the env-configured direct OneSignal keys.
 export async function POST(req: Request) {
   const { userId } = await auth();
   if (!userId) return NextResponse.json({ error: "unauthorized" }, { status: 401 });
@@ -23,15 +27,15 @@ export async function POST(req: Request) {
   }
   if (!body.reminderId) return NextResponse.json({ error: "reminderId required" }, { status: 400 });
 
-  // Validate channel
+  // Validate the requested channel for a clear 400. The queued reminder's own
+  // channel is authoritative and re-validated below.
   const requestedChannel = (body.channel ?? "email").trim().toLowerCase();
-  if (!VALID_CHANNELS.includes(requestedChannel as any)) {
+  if (!VALID_CHANNELS.includes(requestedChannel as Channel)) {
     return NextResponse.json(
       { error: `email, sms or push only`, channel: requestedChannel },
       { status: 400 },
     );
   }
-  const channel = requestedChannel as "email" | "sms" | "push";
 
   const { ConvexHttpClient } = await import("convex/browser");
   const { api } = await import("../../../../../convex/_generated/api");
@@ -53,13 +57,14 @@ export async function POST(req: Request) {
     );
   }
 
-  const channel = reminder.channel?.toLowerCase() ?? "email";
-  if (!["email", "sms", "push"].includes(channel)) {
+  const queuedChannel = reminder.channel?.toLowerCase() ?? "email";
+  if (!VALID_CHANNELS.includes(queuedChannel as Channel)) {
     return NextResponse.json(
-      { error: `email, sms or push only`, channel },
+      { error: `email, sms or push only`, channel: queuedChannel },
       { status: 400 },
     );
   }
+  const channel: Channel = queuedChannel as Channel;
 
   async function fail(message: string, status = 502) {
     try {
@@ -74,23 +79,33 @@ export async function POST(req: Request) {
     return NextResponse.json({ error: message, channel }, { status });
   }
 
-  // Recipient priority: explicit `to` param > per-invoice recipientEmail
-  // stored on the queued reminder > ONESIGNAL_EMAIL_TO fallback.
-  const to =
-    body.to?.trim() ||
-    (typeof reminder.recipientEmail === "string" && reminder.recipientEmail.trim()) ||
-    process.env.ONESIGNAL_EMAIL_TO?.trim();
+  // Recipient priority: explicit `to` param > per-invoice recipient stored on
+  // the queued reminder (recipientPhone for SMS, recipientEmail otherwise) >
+  // ONESIGNAL_EMAIL_TO fallback (email/push only).
+  const isSms = channel === "sms";
+  const queuedRecipient =
+    (isSms
+      ? typeof reminder.recipientPhone === "string" && reminder.recipientPhone.trim()
+      : typeof reminder.recipientEmail === "string" && reminder.recipientEmail.trim()) || "";
+  const to = body.to?.trim() || queuedRecipient || (isSms ? "" : process.env.ONESIGNAL_EMAIL_TO?.trim());
   if (!to) {
     return NextResponse.json(
-      { error: "Recipient not configured (pass `to`, queue the invoice with an email, or set ONESIGNAL_EMAIL_TO)", channel },
+      {
+        error: isSms
+          ? "SMS recipient not configured (pass `to` with an E.164 phone number, or queue the invoice with a phone column value)"
+          : "Recipient not configured (pass `to`, queue the invoice with an email, or set ONESIGNAL_EMAIL_TO)",
+        channel,
+      },
       { status: 503 },
     );
   }
 
+  const settings = await loadOwnerConnectSettings(userId);
+
   try {
-    const { dispatchViaOneSignal } = await import("@/infrastructure/onesignal");
-    const sent = await dispatchViaOneSignal({
-      channel: channel as "email" | "sms" | "push",
+    const sent = await dispatchNotification({
+      settings,
+      channel,
       to,
       subject: reminder.subject,
       body: reminder.body,
@@ -102,16 +117,19 @@ export async function POST(req: Request) {
       reminderId: body.reminderId,
       channel,
     });
-    return NextResponse.json({ sent: true, channel, onesignalId: sent.id, reminder: updated });
+    return NextResponse.json({
+      sent: true,
+      channel,
+      via: sent.via,
+      onesignalId: sent.id,
+      reminder: updated,
+    });
   } catch (e: unknown) {
-    if (e instanceof MissingOneSignalConfigError) {
-      return NextResponse.json({ error: e.message, channel }, { status: 503 });
+    if (e instanceof MissingOneSignalConfigError || e instanceof MissingOneSignalAppIdError) {
+      return fail(e.message, 503);
     }
-    if (e instanceof ChannelNotConfiguredError) {
-      return NextResponse.json({ error: e.message, channel }, { status: 502 });
-    }
-    if (e instanceof PlayerNotRegisteredError) {
-      return NextResponse.json({ error: e.message, channel }, { status: 502 });
+    if (e instanceof ChannelNotConnectedError || e instanceof OneSignalAuthError) {
+      return fail(e.message, 502);
     }
     let message = "send failed";
     try {
@@ -135,6 +153,6 @@ export async function POST(req: Request) {
     } catch {
       // keep default
     }
-    return NextResponse.json({ error: message, channel }, { status: 502 });
+    return fail(message, 502);
   }
 }

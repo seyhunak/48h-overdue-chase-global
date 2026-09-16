@@ -83,11 +83,14 @@ bash scripts/seed-env.sh
 | `STRIPE_PRICE_CREDITS` | Stripe Dashboard → Products | `price_...` or omit for auto `$99` |
 | `NEXT_PUBLIC_SITE_URL` | Local: `http://localhost:3000` | Production URL for webhooks |
 | `ADMIN_EMAIL` | Your email | Seeds admin user on first run |
+| `COMPOSIO_API_KEY` | [app.composio.dev](https://app.composio.dev) → API keys | (optional) server-wide Composio key |
 | `ONESIGNAL_APP_ID` | OneSignal Dashboard → Settings → Keys & IDs | App ID |
 | `ONESIGNAL_API_KEY` | OneSignal Dashboard → Settings → Keys & IDs → REST API Key | REST API Key |
 | `ONESIGNAL_EMAIL_FROM` | OneSignal → Settings → Email | Verified sender email |
 | `ONESIGNAL_SMS_FROM` | OneSignal → Messaging → SMS | (optional) SMS sender number |
 | `ONESIGNAL_EMAIL_TO` | (optional) | Fallback test recipient |
+
+> OneSignal is connected **per owner in `/connect` through Composio** (key + connected account live in that owner's Composio project). The `ONESIGNAL_*` vars above are the optional server-wide fallback and are not required when Composio is connected.
 
 ### 4. Run Locally
 
@@ -96,13 +99,20 @@ npm run dev
 # → http://localhost:3000
 ```
 
-### 5. OneSignal Setup
+### 5. OneSignal via Composio (`/connect`)
 
-1. Create app at [app.onesignal.com](https://app.onesignal.com)
-2. **Keys & IDs** → copy App ID + REST API Key
-3. **Settings → Email** → add & verify sender → copy as `ONESIGNAL_EMAIL_FROM`
-4. (Optional) **Messaging → SMS** → add sender number → copy as `ONESIGNAL_SMS_FROM`
-5. Add all keys to `.env.local`, restart server
+Notifications (email / SMS / push) send through the owner's own Composio →
+OneSignal connection — no OneSignal key is stored in this app.
+
+1. Sign in and open `/connect`.
+2. Paste your **Composio API key** ([app.composio.dev](https://app.composio.dev) → API keys) and your
+   **OneSignal App ID** ([app.onesignal.com](https://app.onesignal.com) → Settings → Keys & IDs), press **Save**.
+3. Press **Connect OneSignal** — Composio hosts the sign-in where you supply your OneSignal REST API key.
+4. Press **Verify**; the badges turn green. Send a test below.
+
+Missing an auth config? `/connect` creates the `onesignal_rest_api` one automatically.
+Prefer server-wide keys? Set `ONESIGNAL_APP_ID` + `ONESIGNAL_API_KEY` and the send path falls
+back to them when no Composio connection exists.
 
 ---
 
@@ -117,9 +127,11 @@ npm run dev
 
 ### Reminder Dispatch (Section 5)
 - Scheduler toggle (paused by default)
-- **Run due sweep now** → queues due steps as `pending_approval`
+- **Intelligent sweep** — for each tracked invoice the engine decides from invoice data (amount, due date, phone/email), past actions (sent/failed channels, attempts) and the calendar whether to queue an **email**, queue an **SMS escalation** (high-value invoices ≥ $2,500 where email was already sent), or **do nothing** (paid, unsubscribed, 5-touch cap, touched today, duplicate, repeated send failures, or gentle steps falling on weekends)
+- **Every decision is logged** — queue *and* do-nothing outcomes appear in the "Recent sweep decisions" feed with a human-readable reason
+- **Run due sweep now** → queues decided steps as `pending_approval` (the sweep never sends)
 - Pending queue with **Approve + Send** / **Skip** per row
-- Channel selector per row: **email / sms / push**
+- Channel shown per row and honored at send time (`recipientPhone` for SMS, `recipientEmail` otherwise)
 - Sent history with status, attempts, errors
 
 ### Data (`/data`)
@@ -128,8 +140,8 @@ npm run dev
 - Operator controls: Mark paid / Reopen / Unsubscribe / Resubscribe
 
 ### Connect (`/connect`)
-- OneSignal provider setup guide
-- Channel status badges (email / SMS / push)
+- Composio → OneSignal connect flow (paste key + App ID → Connect → Verify)
+- Status badges: Composio key, App ID, OneSignal connection, email/SMS/push readiness
 - **Test send** per channel (vault-audited, no credit charge)
 
 ### Admin (`/admin`)
@@ -144,9 +156,9 @@ npm run dev
 src/
 ├── domain/           # Pure logic (invoices, chase sequence, CSV parsing)
 ├── application/      # Use cases (chaseInvoices)
-├── infrastructure/   # OneSignal, Clerk, Convex, Stripe adapters
+├── infrastructure/   # Composio, OneSignal, Clerk, Convex, Stripe adapters
 ├── presentation/     # React components (Tally theme)
-│   ├── connect-page.tsx       # OneSignal setup + test sends
+│   ├── connect-page.tsx       # Composio → OneSignal connect + test sends
 │   ├── reminders-section.tsx  # Dispatch queue + approval
 │   ├── workbench-page.tsx     # CSV → preview → approve
 │   ├── data-page.tsx          # Boundary map + history
@@ -165,7 +177,7 @@ src/
 |-------|---------|
 | `reminders` | Queued steps (status: pending_approved/sent/skipped/failed) |
 | `invoiceState` | Per-invoice touches, paid, unsubscribed, lastTouchAt |
-| `settings` | Scheduler, send window, (dormant) Composio fields |
+| `settings` | Scheduler, send window, per-owner Composio key + OneSignal App ID |
 | `submissions` | Tracked invoices (source for sweep) |
 | `credits` | Balance, lifetimeAdded/Used |
 | `vault` | Audit log (sent, test_send, PDF/CSV exports) |
@@ -259,7 +271,8 @@ vercel --prod
 .
 ├── convex/
 │   ├── schema.ts           # Tables, indexes, validators
-│   ├── reminders.ts        # Mutations/queries + cron sweep
+│   ├── reminders.ts        # Mutations/queries + cron sweep (queue-only)
+│   ├── sweepDecide.ts      # Intelligent sweep decision engine (pure, unit-testable)
 │   └── crons.ts            # Daily 09:05 UTC sweep
 ├── src/
 │   ├── domain/
@@ -267,10 +280,13 @@ vercel --prod
 │   ├── application/
 │   │   └── chaseInvoices.ts
 │   ├── infrastructure/
-│   │   ├── onesignal.ts    # OneSignal REST client (server-only)
+│   │   ├── composio.ts     # Composio → OneSignal (ONESIGNAL_REST_API) client
+│   │   ├── notify.ts       # Dispatch helper: Composio first, env fallback
+│   │   ├── onesignal.ts    # Direct OneSignal REST client (env fallback)
+│   │   ├── owner-settings.ts # Per-owner connect settings reader
 │   │   └── env.ts          # Runtime env access (no build-time throws)
 │   ├── presentation/
-│   │   ├── connect-page.tsx       # OneSignal setup + test
+│   │   ├── connect-page.tsx       # Composio → OneSignal connect + test
 │   │   ├── reminders-section.tsx  # Dispatch queue UI
 │   │   ├── workbench-page.tsx     # CSV → validate → preview
 │   │   ├── data-page.tsx          # Boundary map + history
@@ -280,10 +296,12 @@ vercel --prod
 │   │   │   ├── reminders/send/    # OneSignal dispatch
 │   │   │   ├── connect/
 │   │   │   │   ├── provider-status/
+│   │   │   │   ├── auth-url/      # One-click Composio authorize
+│   │   │   │   ├── verify/
 │   │   │   │   └── test-send/
 │   │   │   ├── checkout/          # Stripe credit pack
 │   │   │   └── webhooks/
-│   │   ├── connect/               # OneSignal setup page
+│   │   ├── connect/               # Composio → OneSignal connect page
 │   │   ├── data/                  # Boundary map
 │   │   ├── app/                   # Workbench
 │   │   ├── admin/                 # Admin panel
