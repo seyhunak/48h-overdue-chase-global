@@ -152,10 +152,13 @@ export async function POST(req: Request) {
       );
     }
     const entityId = resolveEntityId(settings?.composioUser);
+    const pref = (settings as any)?.preferredAccount ?? {};
+    const pinned = typeof pref?.[channel] === "string" ? (pref[channel] as string) : null;
     const dispatched = await dispatchViaComposio({
       apiKey,
       entityId,
       channel: channel as Exclude<Channel, "email">,
+      preferredAccountId: pinned,
       input: { subject: reminder.subject, body: reminder.body, to, recipientEmail: reminder.recipientEmail },
     });
     const updated = await client.mutation((api as any).reminders.markSent, {
@@ -168,6 +171,7 @@ export async function POST(req: Request) {
       channel,
       action: dispatched.actionName,
       app: dispatched.appName,
+      accountId: (dispatched as any).accountId ?? null,
       reminder: updated,
     });
   } catch (e: unknown) {

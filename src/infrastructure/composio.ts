@@ -201,6 +201,20 @@ function toolkitDisplayNameOf(rec: unknown): string {
   }
 }
 
+export type ConnectedAccount = { id: string; app: string; status: string };
+
+function accountStatusOf(rec: unknown): string {
+  try {
+    const r = rec as { status?: unknown; state?: unknown } | null | undefined;
+    const candidates = [r?.status, r?.state];
+    for (const c of candidates) {
+      if (typeof c === "string" && c.trim()) return c.trim().toUpperCase();
+    }
+    return "UNKNOWN";
+  } catch {
+    return "UNKNOWN";
+  }
+}
 function accountIdOf(rec: unknown): string {
   try {
     const r = rec as {
@@ -414,6 +428,29 @@ function appNamesOf(items: unknown[]): string[] {
   }
 }
 
+export async function listConnectedAccounts(
+  apiKey: string,
+  entityId: string,
+): Promise<ConnectedAccount[]> {
+  try {
+    const items = await fetchConnectedAccountItems(apiKey, entityId);
+    const out: ConnectedAccount[] = [];
+    for (const c of items) {
+      try {
+        const id = accountIdOf(c);
+        const app = toolkitDisplayNameOf(c);
+        if (!id || !app) continue;
+        out.push({ id, app, status: accountStatusOf(c) });
+      } catch {
+        // skip bad row
+      }
+    }
+    return out;
+  } catch (e: unknown) {
+    throw toStatusError(e, "composio verify failed");
+  }
+}
+
 export async function listConnectedAccountApps(apiKey: string, entityId: string): Promise<string[]> {
   try {
     const items = await fetchConnectedAccountItems(apiKey, entityId);
@@ -441,17 +478,35 @@ async function findConnectedAccountForChannel(
   apiKey: string,
   entityId: string,
   channel: Exclude<Channel, "email">,
+  preferredAccountId?: string | null,
 ): Promise<{ id: string; appName: string } | null> {
   try {
     const matcher = CHANNEL_APP_MATCHERS[channel];
     const items = await fetchConnectedAccountItems(apiKey, entityId);
+    const pinned = typeof preferredAccountId === "string" ? preferredAccountId.trim() : "";
+    if (pinned) {
+      for (const c of items) {
+        try {
+          const id = accountIdOf(c);
+          if (!id || id !== pinned) continue;
+          const appName = toolkitDisplayNameOf(c);
+          if (!appName) continue;
+          return { id, appName };
+        } catch {
+          // skip bad row
+        }
+      }
+      // Pinned id no longer present — fall through to auto-match so a
+      // stale pin degrades to "best available" instead of hard 502. The
+      // caller surfaces the fallback app in the response.
+    }
     for (const c of items) {
       try {
         const rec = c as { status?: unknown } | null | undefined;
         const appName = toolkitDisplayNameOf(c);
         if (!appName || !matcher.test(appName)) continue;
         const status = String(rec?.status ?? "ACTIVE").toUpperCase();
-        if (status && status !== "ACTIVE" && status !== "ENABLED") continue;
+        if (status && status !== "ACTIVE" && status !== "ENABLED" && status !== "UNKNOWN") continue;
         const id = accountIdOf(c);
         if (id) return { id, appName };
       } catch {
@@ -578,7 +633,8 @@ export async function dispatchViaComposio(opts: {
   entityId: string;
   channel: Exclude<Channel, "email">;
   input: DispatchInput;
-}): Promise<{ actionName: string; appName: string; data: unknown }> {
+  preferredAccountId?: string | null;
+}): Promise<{ actionName: string; appName: string; data: unknown; accountId: string }> {
   try {
     const key = typeof opts?.apiKey === "string" ? opts.apiKey.trim() : "";
     if (!key) throw new MissingComposioConfigError();
@@ -589,7 +645,7 @@ export async function dispatchViaComposio(opts: {
     }
     let account: { id: string; appName: string } | null;
     try {
-      account = await findConnectedAccountForChannel(key, entityId, channel);
+      account = await findConnectedAccountForChannel(key, entityId, channel, opts?.preferredAccountId);
     } catch (e: unknown) {
       throw toStatusError(e, "composio dispatch failed");
     }
@@ -671,7 +727,7 @@ export async function dispatchViaComposio(opts: {
     } catch {
       data = json;
     }
-    return { actionName, appName: account.appName, data };
+    return { actionName, appName: account.appName, data, accountId: account.id };
   } catch (e: unknown) {
     if (e instanceof ChannelNotConnectedError) throw e;
     if (e instanceof MissingComposioConfigError) throw e;

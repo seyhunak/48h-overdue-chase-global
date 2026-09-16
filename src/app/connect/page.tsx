@@ -2,7 +2,7 @@ import type { Metadata } from "next";
 
 export const metadata: Metadata = {
   title: "Connect follow-up channels",
-  description: "Connect Gmail, WhatsApp, SMS, and voice via Composio for approved follow-up dispatch.",
+  description: "Email sends via Resend (no Gmail connection needed). Connect your own WhatsApp, SMS, and voice accounts via Composio for approved follow-up dispatch.",
   alternates: { canonical: "/connect" },
 };
 

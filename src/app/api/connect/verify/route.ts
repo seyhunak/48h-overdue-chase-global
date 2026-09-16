@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { auth } from "@clerk/nextjs/server";
 import {
-  listConnectedAccountApps,
+  listConnectedAccounts,
   resolveComposioKey,
   resolveEntityId,
 } from "@/infrastructure/composio";
@@ -49,8 +49,8 @@ export async function POST(req: Request) {
   const entityId = resolveEntityId(settings?.composioUser, body?.composioUser);
 
   try {
-    const apps = await listConnectedAccountApps(key, entityId);
-    const connected = apps.length > 0;
+    const accounts = await listConnectedAccounts(key, entityId);
+    const connected = accounts.length > 0;
     if (connected) {
       try {
         await client.mutation((api as any).reminders.setComposioVerified, {
@@ -61,8 +61,10 @@ export async function POST(req: Request) {
         // Best effort: verification succeeded even if the stamp write fails.
       }
     }
-    // Never echo the key back.
-    return NextResponse.json({ connected, accounts: apps, entityId });
+    // Never echo the key back. Detailed account list drives per-channel
+    // preferred-account dropdowns: [{ id, app, status }].
+    const names = [...new Set(accounts.map((a) => a.app))];
+    return NextResponse.json({ connected, accounts, apps: names, entityId });
   } catch (e: unknown) {
     let message = "composio verify failed";
     try {

@@ -709,12 +709,85 @@ export const getComposioStatus = query({
   args: { ownerClerkId: v.string() },
   handler: async (ctx: any, args: any) => {
     const row = await getSettingsRow(ctx, args.ownerClerkId);
+    const pref = (row as any)?.preferredAccount ?? {};
     return {
       ownerClerkId: args.ownerClerkId,
       hasKey: Boolean(row?.composioKey),
       composioUser: typeof row?.composioUser === "string" && row.composioUser ? row.composioUser : "default",
       composioVerifiedAt: typeof row?.composioVerifiedAt === "number" ? row.composioVerifiedAt : null,
+      preferredAccount: {
+        whatsapp: typeof pref?.whatsapp === "string" ? pref.whatsapp : null,
+        sms: typeof pref?.sms === "string" ? pref.sms : null,
+        voice: typeof pref?.voice === "string" ? pref.voice : null,
+      },
     };
+  },
+});
+
+export const setPreferredAccounts = mutation({
+  args: {
+    ownerClerkId: v.string(),
+    whatsapp: v.optional(v.string()),
+    sms: v.optional(v.string()),
+    voice: v.optional(v.string()),
+  },
+  handler: async (ctx: any, args: any) => {
+    const clean = (val: unknown) => {
+      if (typeof val !== "string") return undefined;
+      const t = val.trim().slice(0, 200);
+      return t ? t : undefined;
+    };
+    const preferred: Record<string, string> = {};
+    const w = clean(args.whatsapp);
+    const s = clean(args.sms);
+    const vo = clean(args.voice);
+    if (w) preferred.whatsapp = w;
+    if (s) preferred.sms = s;
+    if (vo) preferred.voice = vo;
+    const now = Date.now();
+    const existing = await getSettingsRow(ctx, args.ownerClerkId);
+    if (existing) {
+      await ctx.db.patch(existing._id, {
+        preferredAccount: Object.keys(preferred).length > 0 ? preferred : undefined,
+        updatedAt: now,
+      });
+      return await ctx.db.get(existing._id);
+    }
+    const id = await ctx.db.insert("settings", {
+      ownerClerkId: args.ownerClerkId,
+      schedulerEnabled: false,
+      sendWindowStart: DEFAULT_WINDOW_START,
+      sendWindowEnd: DEFAULT_WINDOW_END,
+      preferredAccount: Object.keys(preferred).length > 0 ? preferred : undefined,
+      updatedAt: now,
+    });
+    return await ctx.db.get(id);
+  },
+});
+
+export const clearComposioConnection = mutation({
+  args: { ownerClerkId: v.string() },
+  handler: async (ctx: any, args: any) => {
+    const now = Date.now();
+    const existing = await getSettingsRow(ctx, args.ownerClerkId);
+    if (existing) {
+      await ctx.db.patch(existing._id, {
+        composioKey: undefined,
+        composioUser: undefined,
+        composioVerifiedAt: undefined,
+        preferredAccount: undefined,
+        updatedAt: now,
+      });
+      return await ctx.db.get(existing._id);
+    }
+    const id = await ctx.db.insert("settings", {
+      ownerClerkId: args.ownerClerkId,
+      schedulerEnabled: false,
+      sendWindowStart: DEFAULT_WINDOW_START,
+      sendWindowEnd: DEFAULT_WINDOW_END,
+      updatedAt: now,
+    });
+    return await ctx.db.get(id);
   },
 });
 

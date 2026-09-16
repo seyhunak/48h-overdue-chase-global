@@ -112,6 +112,13 @@ export default defineSchema({
     composioKey: v.optional(v.string()),
     composioUser: v.optional(v.string()),
     composioVerifiedAt: v.optional(v.number()),
+    preferredAccount: v.optional(
+      v.object({
+        whatsapp: v.optional(v.string()),
+        sms: v.optional(v.string()),
+        voice: v.optional(v.string()),
+      }),
+    ),
     updatedAt: v.number(),
   }).index("by_owner", ["ownerClerkId"]),
 });
