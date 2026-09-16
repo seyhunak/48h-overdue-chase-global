@@ -100,7 +100,7 @@ function WorkbenchInner() {
     return (
       <div className="mx-auto max-w-6xl px-4 py-12">
         <h1 className="text-2xl font-bold">Workbench unavailable</h1>
-        <p className="mt-2 text-muted-foreground">Backend is not configured. Set NEXT_PUBLIC_CONVEX_URL via scripts/seed-env.sh.</p>
+        <p className="mt-2" style={{ color: "var(--color-muted)" }}>Backend is not configured. Set NEXT_PUBLIC_CONVEX_URL via scripts/seed-env.sh.</p>
       </div>
     );
   }
@@ -113,10 +113,10 @@ function WorkbenchInner() {
   if (balance <= 0) {
     return (
       <div className="mx-auto max-w-3xl px-4 py-16 text-center">
-        <h1 className="text-3xl font-bold">Out of credits</h1>
-        <p className="mt-2 text-muted-foreground">Chasing costs 1 credit per invoice. Top up to keep clearing invoices.</p>
+        <h1 className="font-display text-3xl font-semibold" style={{ color: "var(--color-ink)" }}>Out of credits</h1>
+        <p className="mt-2" style={{ color: "var(--color-muted)" }}>Chasing costs 1 credit per invoice. Top up to keep clearing invoices.</p>
         <form action="/api/checkout" method="POST" className="mt-6">
-          <button type="submit" className="rounded-lg bg-primary px-6 py-3 font-semibold text-primary-foreground">
+          <button type="submit" className="hallmark-btn hallmark-btn-primary px-6 py-3 font-semibold">
             Buy 100 credits — $1,000
           </button>
         </form>
@@ -144,14 +144,27 @@ function WorkbenchInner() {
   }
 
   return (
-    <div className="mx-auto max-w-6xl px-4 py-10">
-      {added && <p className="mb-4 rounded-md border p-3 text-sm">Credits added — balance updated.</p>}
-      <h1 className="text-3xl font-bold">Chase workbench</h1>
-      <p className="mt-1 text-muted-foreground">Balance: {balance} credits · 1 credit per invoice</p>
+    <div className="font-body-x mx-auto max-w-6xl px-4 py-10" style={{ background: "var(--color-paper)" }}>
+      {added && (
+        <p className="mb-4 rounded-md border p-3 text-sm" style={{ borderColor: "var(--color-rule-2)" }}>
+          Credits added — balance updated.
+        </p>
+      )}
+      <p className="mono-label" style={{ color: "var(--color-muted)" }}>
+        Workbench · 1 credit / invoice
+      </p>
+      <h1 className="font-display mt-2 text-3xl font-semibold" style={{ color: "var(--color-ink)" }}>
+        Chase workbench
+      </h1>
+      <p className="tnum mt-1" style={{ color: "var(--color-muted)" }}>
+        Balance: {balance} credits · 1 credit per invoice
+      </p>
 
-      <div className="mt-6 rounded-xl border p-4">
-        <h2 className="font-semibold">1. Upload CSV of overdue invoices</h2>
-        <p className="text-sm text-muted-foreground">Columns: clientName,invoiceId,amount,currency,dueDate</p>
+      <div className="mt-6 rounded-[10px] border p-4" style={{ borderColor: "var(--color-rule-2)" }}>
+        <h2 className="font-semibold" style={{ color: "var(--color-ink)" }}>
+          1. Upload CSV of overdue invoices
+        </h2>
+        <p className="text-sm" style={{ color: "var(--color-muted)" }}>Columns: clientName,invoiceId,amount,currency,dueDate</p>
         <input
           type="file"
           accept=".csv"
@@ -169,15 +182,17 @@ function WorkbenchInner() {
         />
       </div>
 
-      <div className="mt-6 rounded-xl border p-4">
-        <h2 className="font-semibold">2. Validation table</h2>
+      <div className="mt-6 rounded-[10px] border p-4" style={{ borderColor: "var(--color-rule-2)" }}>
+        <h2 className="font-semibold" style={{ color: "var(--color-ink)" }}>
+          2. Validation table
+        </h2>
         {parsed.valid.length === 0 && parsed.errors.length === 0 && (
-          <p className="text-sm text-muted-foreground">No rows yet.</p>
+          <p className="text-sm" style={{ color: "var(--color-muted)" }}>No rows yet.</p>
         )}
         {parsed.valid.length > 0 && (
-          <table className="mt-2 w-full text-sm">
+          <table className="tnum mt-2 w-full text-sm">
             <thead>
-              <tr className="text-left text-muted-foreground">
+              <tr className="mono-label text-left" style={{ color: "var(--color-muted)" }}>
                 <th>Client</th><th>Invoice</th><th>Amount</th><th>Due</th><th>Days overdue</th>
               </tr>
             </thead>
@@ -198,35 +213,39 @@ function WorkbenchInner() {
         <button
           onClick={handleChase}
           disabled={parsed.valid.length === 0 || balance < parsed.valid.length}
-          className="mt-4 rounded-lg bg-primary px-5 py-2.5 font-semibold text-primary-foreground disabled:opacity-50"
+          className="hallmark-btn hallmark-btn-primary mt-4 px-5 py-2.5 font-semibold disabled:opacity-50"
         >
           Chase {parsed.valid.length} invoice(s) — {parsed.valid.length} credit(s)
         </button>
         {chased && <p className="mt-2 text-sm text-green-700">Chased + logged to vault.</p>}
       </div>
 
-      <div className="mt-6 rounded-xl border p-4">
-        <h2 className="font-semibold">3. 4-step chase sequence preview (first invoice)</h2>
+      <div className="mt-6 rounded-[10px] border p-4" style={{ borderColor: "var(--color-rule-2)" }}>
+        <h2 className="font-semibold" style={{ color: "var(--color-ink)" }}>
+          3. 4-step chase sequence preview (first invoice)
+        </h2>
         {seq.map((s) => (
-          <div key={s.key} className="mt-3 rounded-md bg-muted p-3 text-sm">
-            <div className="font-semibold">[{s.key}] {s.subject}</div>
-            <pre className="mt-1 whitespace-pre-wrap">{s.body}</pre>
+          <div key={s.key} className="code-card mt-3 p-3 text-sm">
+            <div className="font-semibold"><span className="tok-key">[{s.key}]</span> <span className="tok-str">{s.subject}</span></div>
+            <pre className="tok-dim mt-1 whitespace-pre-wrap">{s.body}</pre>
           </div>
         ))}
-        {seq.length === 0 && <p className="text-sm text-muted-foreground">Upload rows to preview.</p>}
+        {seq.length === 0 && <p className="text-sm" style={{ color: "var(--color-muted)" }}>Upload rows to preview.</p>}
       </div>
 
-      <div className="mt-6 rounded-xl border p-4">
-        <h2 className="font-semibold">4. Vault + export</h2>
+      <div className="mt-6 rounded-[10px] border p-4" style={{ borderColor: "var(--color-rule-2)" }}>
+        <h2 className="font-semibold" style={{ color: "var(--color-ink)" }}>
+          4. Vault + export
+        </h2>
         <div className="mt-3 flex gap-2">
-          <button onClick={() => download("overdue-chase.csv", toCsv(parsed.valid), "text/csv")} className="rounded-md border px-4 py-2 text-sm">
+          <button onClick={() => download("overdue-chase.csv", toCsv(parsed.valid), "text/csv")} className="hallmark-btn rounded-md border px-4 py-2 text-sm" style={{ borderColor: "var(--color-rule-2)" }}>
             Export CSV
           </button>
-          <button onClick={() => downloadPdf(parsed.valid)} className="rounded-md border px-4 py-2 text-sm">
+          <button onClick={() => downloadPdf(parsed.valid)} className="hallmark-btn rounded-md border px-4 py-2 text-sm" style={{ borderColor: "var(--color-rule-2)" }}>
             Export PDF
           </button>
         </div>
-        <ul className="mt-3 text-sm text-muted-foreground">
+        <ul className="tnum mt-3 text-sm" style={{ color: "var(--color-muted)" }}>
           {parsed.valid.map((r) => <li key={r.invoiceId}>vault · {r.clientName} · {r.invoiceId}</li>)}
         </ul>
       </div>
