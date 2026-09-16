@@ -10,13 +10,14 @@ import { api } from "../../convex/_generated/api";
 function BalanceBadge({ clerkId }: { clerkId: string }) {
   const q = useQuery((api as any).credits.getBalance, { clerkId }) as any;
   if (typeof q?.balance !== "number") return null;
+  const used = typeof q?.lifetimeUsed === "number" ? q.lifetimeUsed : 0;
   return (
     <span
       className="mono-label tnum rounded-full border px-3 py-1"
       style={{ borderColor: "var(--color-rule-2)", color: "var(--color-ink-2)" }}
-      title="Credit balance"
+      title={`${q.balance} credits available · ${used} used`}
     >
-      {q.balance} credits
+      {q.balance} credits · {used} used
     </span>
   );
 }
