@@ -12,6 +12,7 @@ export async function POST(req: Request) {
   if (!userId) return NextResponse.json({ error: "unauthorized" }, { status: 401 });
 
   const origin = new URL(req.url).origin;
+  const perCredit = (PACK_PRICE_USD / PACK_CREDITS).toFixed(2);
   const isPriceId = Boolean(price?.startsWith("price_"));
   const session = await stripe.checkout.sessions.create({
     mode: "payment",
@@ -24,7 +25,7 @@ export async function POST(req: Request) {
               price_data: {
                 currency: "usd",
                 unit_amount: PACK_PRICE_USD * 100,
-                product_data: { name: `${PACK_CREDITS} credits @ $10/credit` },
+                product_data: { name: `${PACK_CREDITS} credits @ $${perCredit}/credit` },
               },
             },
           ],

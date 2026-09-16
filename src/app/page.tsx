@@ -284,8 +284,8 @@ export default function LandingPage() {
           <article className="tally-tier">
             <span className="tally-tier__badge">Single pack · featured</span>
             <div className="tally-tier__name">OverdueChase pack</div>
-            <div className="tally-tier__price tnum">100 credits — $1,000</div>
-            <p className="tally-tier__desc">$10/credit · 1 credit per invoice chased · free 3 on signup</p>
+            <div className="tally-tier__price tnum">100 credits — $99</div>
+            <p className="tally-tier__desc">$0.99/credit · 1 credit per invoice chased · free 3 on signup</p>
             <ul className="tally-tier__features">
               <li>CSV validation in seconds</li>
               <li>4-step chase sequence preview</li>

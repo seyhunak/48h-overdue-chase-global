@@ -17,7 +17,7 @@ export type ChaseStep = {
 
 export const CREDITS_PER_INVOICE = 1;
 export const PACK_CREDITS = 100;
-export const PACK_PRICE_USD = 1000;
+export const PACK_PRICE_USD = 99;
 export const FREE_SIGNUP_CREDITS = 3;
 
 export function validateInvoiceRow(row: Record<string, string>): { invoice?: Invoice; error?: string } {

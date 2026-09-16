@@ -2,7 +2,7 @@
 
 **Problem:** Founders at 5–50 person service firms waste 5–15h/week chasing overdue invoices.
 **Buyer:** Founder / COO.
-**Offer:** $1,000 = 100 credits ($10/credit, free 3 on signup), 1 credit per invoice chased.
+**Offer:** $99 = 100 credits ($0.99/credit, free 3 on signup), 1 credit per invoice chased.
 
 ## Stack
 
@@ -11,7 +11,7 @@ Next.js 15 App Router + Tailwind + shadcn-style UI, Clean Architecture
 Clerk auth (admin seeded via `ADMIN_EMAIL`). Convex backend
 (`tenants`, `users`, `invoices`, `submissions`, `credits`, `vault`;
 functions `credits:getBalance/getOrCreate/consume/addCredits`).
-Stripe credit billing (100 credits $1,000, top-menu Buy Credits → Checkout → `/app?credits=added`).
+Stripe credit billing (100 credits $99, top-menu Buy Credits → Checkout → `/app?credits=added`).
 
 ## Setup
 
@@ -33,5 +33,5 @@ credits via `credits:getOrCreate`.
 
 Register/login (Clerk) → 3 free credits → upload overdue CSV in `/app` →
 validation table → 4-step chase preview (pre-due/due/+7/+14/+30) → chase
-(1 credit/invoice) → vault + PDF/CSV export → Buy 100 ($1,000) when empty.
+(1 credit/invoice) → vault + PDF/CSV export → Buy 100 ($99) when empty.
 `/admin` (role=admin) shows submissions + credits log.

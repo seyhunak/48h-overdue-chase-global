@@ -144,7 +144,7 @@ function WorkbenchInner() {
         <p className="mt-2" style={{ color: "var(--color-muted)" }}>Chasing costs 1 credit per invoice. Top up to keep clearing invoices.</p>
         <form action="/api/checkout" method="POST" className="mt-6">
           <button type="submit" className="hallmark-btn hallmark-btn-primary px-6 py-3 font-semibold">
-            Buy 100 credits — $1,000
+            Buy 100 credits — $99
           </button>
         </form>
         {added && <p className="mt-4 text-sm">Credits added — balance is refreshing…</p>}

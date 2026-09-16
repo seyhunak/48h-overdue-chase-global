@@ -13,7 +13,7 @@ export const metadata: Metadata = {
   metadataBase: new URL(process.env.NEXT_PUBLIC_SITE_URL ?? "http://localhost:3000"),
   openGraph: {
     title: "OverdueChase — Stop chasing overdue invoices",
-    description: "Upload 10 invoices — see cleared. 100 credits $1,000. Free 3 on signup.",
+    description: "Upload 10 invoices — see cleared. 100 credits $99. Free 3 on signup.",
     type: "website",
   },
 };
@@ -23,7 +23,7 @@ const jsonLd = {
   "@type": "Product",
   name: "OverdueChase",
   description: "Overdue invoice chase workbench for service firms.",
-  offers: { "@type": "Offer", price: "1000", priceCurrency: "USD" },
+    offers: { "@type": "Offer", price: "99", priceCurrency: "USD" },
 };
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
@@ -89,7 +89,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
               </div>
               <div className="tally-footer__legal">
                 <span>OverdueChase</span>
-                <span>© 2026 OverdueChase · 100 credits $1,000 · 3 free on signup</span>
+                <span>© 2026 OverdueChase · 100 credits $99 · 3 free on signup</span>
               </div>
             </div>
           </footer>
