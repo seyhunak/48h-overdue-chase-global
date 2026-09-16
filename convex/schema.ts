@@ -65,8 +65,10 @@ export default defineSchema({
     currency: v.string(),
     dueDate: v.string(),
     recipientEmail: v.optional(v.string()),
+    // OneSignal channels (email|sms|push). Legacy union members (whatsapp/voice)
+    // kept for live-data compat — new writes use email|sms|push only.
     channel: v.optional(
-      v.union(v.literal("email"), v.literal("whatsapp"), v.literal("sms"), v.literal("voice")),
+      v.union(v.literal("email"), v.literal("sms"), v.literal("push"), v.literal("whatsapp"), v.literal("voice")),
     ),
     stepKey: v.union(
       v.literal("pre-due"),
@@ -109,6 +111,7 @@ export default defineSchema({
     schedulerEnabled: v.boolean(),
     sendWindowStart: v.number(),
     sendWindowEnd: v.number(),
+    // DORMANT (Composio): legacy fields kept for live-data compat.
     composioKey: v.optional(v.string()),
     composioUser: v.optional(v.string()),
     composioVerifiedAt: v.optional(v.number()),

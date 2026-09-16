@@ -9,7 +9,7 @@ type Reminder = {
   clientName: string;
   invoiceId: string;
   recipientEmail?: string;
-  channel?: "email" | "whatsapp" | "sms" | "voice";
+  channel?: string;
   stepKey: string;
   subject: string;
   scheduledFor: number;
@@ -20,7 +20,7 @@ type Reminder = {
   createdAt: number;
 };
 
-const CHANNELS = ["email", "whatsapp", "sms", "voice"] as const;
+const CHANNELS = ["email", "sms", "push"] as const;
 
 function fmtUtc(ms: number): string {
   try {
@@ -44,7 +44,6 @@ export function ReminderDispatchSection({ userId }: { userId: string }) {
   const doSweep = useMutation((api as any).reminders.runDueSweepForOwner);
   const doApprove = useMutation((api as any).reminders.approve);
   const doSkip = useMutation((api as any).reminders.skip);
-  const doSetChannel = useMutation((api as any).reminders.setChannel);
 
   const [busy, setBusy] = useState<string[]>([]);
   const [rowError, setRowError] = useState<Record<string, string>>({});
@@ -83,24 +82,11 @@ export function ReminderDispatchSection({ userId }: { userId: string }) {
     }
   }
 
-  async function handleChannelChange(r: Reminder, channel: string) {
-    setRowChannel((m) => ({ ...m, [r._id]: channel }));
-    setRowError((m) => ({ ...m, [r._id]: "" }));
-    markBusy(r._id, true);
-    try {
-      await doSetChannel({ ownerClerkId: userId, reminderId: r._id, channel });
-    } catch (e: any) {
-      setRowError((m) => ({ ...m, [r._id]: e?.message ?? "channel update failed" }));
-    } finally {
-      markBusy(r._id, false);
-    }
-  }
-
   async function handleApproveAndSend(r: Reminder) {
     setRowError((m) => ({ ...m, [r._id]: "" }));
     setRowOk((m) => ({ ...m, [r._id]: "" }));
     markBusy(r._id, true);
-    const channel = rowChannel[r._id] ?? r.channel ?? "email";
+    const channel = "email";
     try {
       await doApprove({ ownerClerkId: userId, reminderId: r._id });
       const res = await fetch("/api/reminders/send", {
@@ -211,22 +197,7 @@ export function ReminderDispatchSection({ userId }: { userId: string }) {
                   <td className="max-w-[280px] truncate" title={r.subject}>
                     {r.subject}
                   </td>
-                  <td>
-                    <select
-                      aria-label={`Channel for ${r.invoiceId}`}
-                      className="rounded-md border p-1 text-xs"
-                      style={{ borderColor: "var(--color-rule-2)", color: "var(--color-ink)" }}
-                      value={rowChannel[r._id] ?? r.channel ?? "email"}
-                      disabled={isBusy(r._id)}
-                      onChange={(e) => handleChannelChange(r, e.target.value)}
-                    >
-                      {CHANNELS.map((c) => (
-                        <option key={c} value={c}>
-                          {c}
-                        </option>
-                      ))}
-                    </select>
-                  </td>
+                  <td>email</td>
                   <td>{fmtUtc(r.scheduledFor)}</td>
                   <td>
                     <div className="flex flex-wrap items-center gap-2 py-1">

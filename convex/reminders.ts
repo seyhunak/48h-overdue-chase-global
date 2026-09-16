@@ -444,8 +444,10 @@ export const queueForInvoice = mutation({
     currency: v.string(),
     dueDate: v.string(),
     recipientEmail: v.optional(v.string()),
+    // OneSignal channels: email|sms|push. Legacy members (whatsapp/voice)
+    // kept for live-data compat — new writes use email|sms|push only.
     channel: v.optional(
-      v.union(v.literal("email"), v.literal("whatsapp"), v.literal("sms"), v.literal("voice")),
+      v.union(v.literal("email"), v.literal("sms"), v.literal("push"), v.literal("whatsapp"), v.literal("voice")),
     ),
     stepKey: v.union(
       v.literal("pre-due"),
@@ -601,10 +603,12 @@ export const setUnsubscribed = mutation({
 });
 
 export const setChannel = mutation({
+  // OneSignal channels: email|sms|push. Legacy union members (whatsapp/voice)
+  // kept for live-data compat — new writes use email|sms|push only.
   args: {
     ownerClerkId: v.string(),
     reminderId: v.id("reminders"),
-    channel: v.union(v.literal("email"), v.literal("whatsapp"), v.literal("sms"), v.literal("voice")),
+    channel: v.union(v.literal("email"), v.literal("sms"), v.literal("push"), v.literal("whatsapp"), v.literal("voice")),
   },
   handler: async (ctx: any, args: any) => {
     const row = await ctx.db.get(args.reminderId);
@@ -659,6 +663,8 @@ export const resubscribe = mutation({
 });
 
 export const saveComposioSettings = mutation({
+  // DORMANT (email-only): kept for live-data compat, never called by UI.
+  // Email sends via Resend; no channel credentials are collected.
   args: { ownerClerkId: v.string(), composioUser: v.string(), composioKey: v.string() },
   handler: async (ctx: any, args: any) => {
     const user = (args.composioUser ?? "").trim() || "default";
@@ -685,6 +691,7 @@ export const saveComposioSettings = mutation({
 });
 
 export const setComposioVerified = mutation({
+  // DORMANT (email-only): verify-stamp writer kept for live-data compat, never called.
   args: { ownerClerkId: v.string(), verifiedAt: v.number() },
   handler: async (ctx: any, args: any) => {
     const now = Date.now();
@@ -706,6 +713,8 @@ export const setComposioVerified = mutation({
 });
 
 export const getComposioStatus = query({
+  // DORMANT (email-only): kept for live-data compat, never called by UI.
+  // /connect now reads Resend status from GET /api/connect/email-status.
   args: { ownerClerkId: v.string() },
   handler: async (ctx: any, args: any) => {
     const row = await getSettingsRow(ctx, args.ownerClerkId);
@@ -725,6 +734,7 @@ export const getComposioStatus = query({
 });
 
 export const setPreferredAccounts = mutation({
+  // DORMANT (email-only): kept for live-data compat, never called by UI.
   args: {
     ownerClerkId: v.string(),
     whatsapp: v.optional(v.string()),
@@ -766,6 +776,7 @@ export const setPreferredAccounts = mutation({
 });
 
 export const clearComposioConnection = mutation({
+  // DORMANT (email-only): kept for live-data compat, never called by UI.
   args: { ownerClerkId: v.string() },
   handler: async (ctx: any, args: any) => {
     const now = Date.now();
@@ -830,11 +841,13 @@ export const getByIdForOwner = query({
 });
 
 export const markSent = mutation({
+  // OneSignal channels: email|sms|push. Legacy union members (whatsapp/voice)
+  // kept for live-data compat — new writes use email|sms|push only.
   args: {
     ownerClerkId: v.string(),
     reminderId: v.id("reminders"),
     channel: v.optional(
-      v.union(v.literal("email"), v.literal("whatsapp"), v.literal("sms"), v.literal("voice")),
+      v.union(v.literal("email"), v.literal("sms"), v.literal("push"), v.literal("whatsapp"), v.literal("voice")),
     ),
   },
   handler: async (ctx: any, args: any) => {

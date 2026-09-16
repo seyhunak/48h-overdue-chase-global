@@ -1,8 +1,8 @@
 import type { Metadata } from "next";
 
 export const metadata: Metadata = {
-  title: "Connect follow-up channels",
-  description: "Email sends via Resend (no Gmail connection needed). Connect your own WhatsApp, SMS, and voice accounts via Composio for approved follow-up dispatch.",
+  title: "OneSignal provider setup",
+  description: "Configure OneSignal app ID and API key, check channel status, and send a test.",
   alternates: { canonical: "/connect" },
 };
 
