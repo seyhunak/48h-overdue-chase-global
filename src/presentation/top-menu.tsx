@@ -55,16 +55,9 @@ function ClerkAware() {
 export function TopMenu() {
   const clerkKey = getClerkPublishableKey();
   return (
-    <header
-      className="font-body-x"
-      style={{
-        background: "var(--color-paper)",
-        borderBottom: "1px solid var(--color-rule)",
-        backdropFilter: "blur(8px)",
-      }}
-    >
-      <div className="mx-auto flex max-w-6xl items-center gap-4 px-4 py-3">
-        <Link href="/" className="flex items-center gap-2">
+    <div className="tally-navwrap">
+      <header className="tally-nav" style={{ fontFamily: "var(--font-body)" }}>
+        <Link href="/" className="flex items-center gap-2" aria-label="OverdueChase home">
           <span
             className="flex h-7 w-7 items-center justify-center rounded-md"
             style={{ background: "var(--color-accent)" }}
@@ -75,19 +68,11 @@ export function TopMenu() {
             OverdueChase
           </span>
         </Link>
-        <nav className="ml-4 flex items-center gap-2 text-sm" aria-label="Primary">
-          <Link
-            href="/app"
-            className="hallmark-btn hallmark-link rounded-md border px-3 py-1.5"
-            style={{ borderColor: "var(--color-rule-2)" }}
-          >
+        <nav className="tally-nav__links ml-2" aria-label="Primary">
+          <Link href="/app" className="tally-nav__link">
             App
           </Link>
-          <Link
-            href="/admin"
-            className="hallmark-btn hallmark-link rounded-md border px-3 py-1.5"
-            style={{ borderColor: "var(--color-rule-2)" }}
-          >
+          <Link href="/admin" className="tally-nav__link">
             Admin
           </Link>
         </nav>
@@ -104,7 +89,7 @@ export function TopMenu() {
             </Link>
           </div>
         )}
-      </div>
-    </header>
+      </header>
+    </div>
   );
 }

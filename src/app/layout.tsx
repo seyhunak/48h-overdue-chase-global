@@ -1,6 +1,7 @@
 import type { Metadata } from "next";
 import "./globals.css";
 import "@/presentation/tokens.css";
+import "@/presentation/tally.css";
 import { Providers } from "@/presentation/providers";
 import { TopMenu } from "@/presentation/top-menu";
 import Link from "next/link";
@@ -32,7 +33,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
         <link rel="preconnect" href="https://fonts.googleapis.com" />
         <link rel="preconnect" href="https://fonts.gstatic.com" crossOrigin="anonymous" />
         <link
-          href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@400;500;600&display=swap"
+          href="https://fonts.googleapis.com/css2?family=Geist:wght@400;500;600;700&family=Geist+Mono:wght@400;500;600&family=Instrument+Serif:ital@0;1&display=swap"
           rel="stylesheet"
         />
       </head>
@@ -41,17 +42,55 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
         <Providers>
           <TopMenu />
           <main>{children}</main>
-          <footer style={{ borderTop: "1px solid var(--color-rule)" }}>
-            <div className="mx-auto flex max-w-6xl flex-wrap items-center gap-x-6 gap-y-2 px-4 py-8 text-sm">
-              <span className="mono-label" style={{ color: "var(--color-muted)" }}>
-                OverdueChase
-              </span>
-              <Link className="hallmark-link" href="/about">About</Link>
-              <Link className="hallmark-link" href="/terms">Terms</Link>
-              <Link className="hallmark-link" href="/privacy">Privacy</Link>
-              <Link className="hallmark-link" href="/contact">Contact</Link>
-              <Link className="hallmark-link" href="/sitemap.xml">Sitemap</Link>
-              <Link className="hallmark-link" href="/robots.txt">Robots</Link>
+          <footer className="tally-footer">
+            <div className="tally__container">
+              <p className="tally-footer__statement">
+                OverdueChase is a chase console for firms that would rather get <span className="italic-accent">paid</span> than chase.
+              </p>
+              <div className="tally-footer__row">
+                <div className="tally-footer__col">
+                  <h5>Product</h5>
+                  <ul>
+                    <li>
+                      <Link href="/about">About</Link>
+                    </li>
+                  </ul>
+                </div>
+                <div className="tally-footer__col">
+                  <h5>Legal</h5>
+                  <ul>
+                    <li>
+                      <Link href="/terms">Terms</Link>
+                    </li>
+                    <li>
+                      <Link href="/privacy">Privacy</Link>
+                    </li>
+                  </ul>
+                </div>
+                <div className="tally-footer__col">
+                  <h5>Connect</h5>
+                  <ul>
+                    <li>
+                      <Link href="/contact">Contact</Link>
+                    </li>
+                  </ul>
+                </div>
+                <div className="tally-footer__col">
+                  <h5>System</h5>
+                  <ul>
+                    <li>
+                      <Link href="/sitemap.xml">Sitemap</Link>
+                    </li>
+                    <li>
+                      <Link href="/robots.txt">Robots</Link>
+                    </li>
+                  </ul>
+                </div>
+              </div>
+              <div className="tally-footer__legal">
+                <span>OverdueChase</span>
+                <span>© 2026 OverdueChase · 100 credits $1,000 · 3 free on signup</span>
+              </div>
             </div>
           </footer>
         </Providers>
