@@ -1,11 +1,11 @@
 import Link from "next/link";
 
 const MARQUEE = [
-  "CHASE · EVERY · INVOICE",
+  "FOLLOW UP · EVERY · INVOICE",
   "POLITE · BY · DEFAULT",
   "PAID · IN · WEEKS",
-  "VAULT · EVERY · CHASE",
-  "CLEARED · NOT · CHASED",
+  "VAULT · EVERY · FOLLOW-UP",
+  "CLEARED · NOT · FOLLOWED UP",
 ];
 
 const LOGOS = ["Bramble", "Harth & Fell", "COPPERLINE", "quietly kept", "Northfield", "Mercer & Fell"];
@@ -20,11 +20,11 @@ const STEPS = [
 export default function LandingPage() {
   return (
     <div className="tally">
-      {/* Live chase ticker under nav */}
+      {/* Live follow-up ticker under nav */}
       <div className="tally-ticker" role="status" aria-live="polite">
         <span className="tally-ticker__pill">
           <span className="tally-ticker__dot" aria-hidden />
-          <span className="tnum">LIVE · CHASING · $48,200 RECOVERED THIS WEEK · 132 INVOICES CLEARED</span>
+          <span className="tnum">LIVE · FOLLOWING UP · $48,200 RECOVERED THIS WEEK · 132 INVOICES CLEARED</span>
         </span>
       </div>
 
@@ -34,10 +34,10 @@ export default function LandingPage() {
           <div className="tally-hero__layout">
             <div>
               <h1 className="tally-hero__h1">
-                Get every overdue invoice <span className="italic-accent">paid</span> without the awkward chase.
+                Get every overdue invoice <span className="italic-accent">paid</span> without the awkward follow-up.
               </h1>
               <p className="tally-hero__sub">
-                Upload your overdue CSV. Validate in seconds. Fire a proven 4-step chase sequence. Export the
+                Upload your overdue CSV. Validate in seconds. Fire a proven 4-step follow-up sequence. Export the
                 vault as PDF + CSV. Built for founders and COOs at 5–50 person service firms.
               </p>
               <div className="tally-hero__ctas">
@@ -52,7 +52,7 @@ export default function LandingPage() {
               </div>
             </div>
 
-            <aside className="tally-invoice" aria-label="Overdue invoice chase preview">
+            <aside className="tally-invoice" aria-label="Overdue invoice follow-up preview">
               <div className="tally-invoice__head">
                 <div>
                   <div className="tally-invoice__title">INV-014 · $3,400.00</div>
@@ -111,7 +111,7 @@ export default function LandingPage() {
             <div>
               <span className="tally__eyebrow">◇ workbench</span>
               <h2 className="tally-section-head__title">
-                A chase console that <span className="italic-accent">knows</span> who&apos;s late.
+                A follow-up console that <span className="italic-accent">knows</span> who&apos;s late.
               </h2>
             </div>
             <p className="tally-section-head__desc">
@@ -120,9 +120,9 @@ export default function LandingPage() {
             </p>
           </div>
 
-          <div className="tally-bench" role="img" aria-label="Chase console preview">
+          <div className="tally-bench" role="img" aria-label="Follow-up console preview">
             <div className="tally-bench__rail">
-              <div className="tally-bench__brand">OverdueChase</div>
+              <div className="tally-bench__brand">ClearDue</div>
               <div className="tally-bench__nav">
                 <div className="tally-bench__navitem" aria-current="page">
                   Queue
@@ -219,8 +219,8 @@ export default function LandingPage() {
             </div>
             <div className="tally-stats__card">
               <div className="tally-stats__num tnum">5h→20min</div>
-              <div className="tally-stats__label">weekly chase time · benchmark</div>
-              <div className="tally-stats__note">Friday chase collapses from hours of inbox digging to minutes.</div>
+              <div className="tally-stats__label">weekly follow-up time · benchmark</div>
+              <div className="tally-stats__note">Friday follow-up collapses from hours of inbox digging to minutes.</div>
             </div>
             <div className="tally-stats__card">
               <div className="tally-stats__num tnum">$17.7k</div>
@@ -238,7 +238,7 @@ export default function LandingPage() {
             <div>
               <span className="tally__eyebrow">◇ how it works</span>
               <h2 className="tally-section-head__title">
-                Upload, chase, vault — <span className="italic-accent">then</span> get paid.
+                Upload, follow up, vault — <span className="italic-accent">then</span> get paid.
               </h2>
             </div>
             <p className="tally-section-head__desc">
@@ -256,13 +256,13 @@ export default function LandingPage() {
             </article>
             <article className="tally-feature">
               <div className="tally-feature__art">pre-due → due → +7 → +14 → +30 · polite by default</div>
-              <h3 className="tally-feature__title">Chase on rails</h3>
+              <h3 className="tally-feature__title">Follow up on rails</h3>
               <p className="tally-feature__desc">
                 A proven 4-step sequence preview for every invoice — firm when it must be, polite always.
               </p>
             </article>
             <article className="tally-feature">
-              <div className="tally-feature__art">vault log · INV-014 chased → cleared · PDF + CSV export</div>
+              <div className="tally-feature__art">vault log · INV-014 followed up → cleared · PDF + CSV export</div>
               <h3 className="tally-feature__title">Prove it from the vault</h3>
               <p className="tally-feature__desc">
                 Every touch logged. One-click PDF and CSV exports close the loop with finance.
@@ -283,12 +283,12 @@ export default function LandingPage() {
           </div>
           <article className="tally-tier">
             <span className="tally-tier__badge">Single pack · featured</span>
-            <div className="tally-tier__name">OverdueChase pack</div>
+            <div className="tally-tier__name">ClearDue pack</div>
             <div className="tally-tier__price tnum">100 credits — $99</div>
-            <p className="tally-tier__desc">$0.99/credit · 1 credit per invoice chased · free 3 on signup</p>
+            <p className="tally-tier__desc">$0.99/credit · 1 credit per invoice followed up · free 3 on signup</p>
             <ul className="tally-tier__features">
               <li>CSV validation in seconds</li>
-              <li>4-step chase sequence preview</li>
+              <li>4-step follow-up sequence preview</li>
               <li>Vault log + PDF and CSV export</li>
               <li>Built for 5–50 person service firms</li>
             </ul>
@@ -302,7 +302,7 @@ export default function LandingPage() {
       {/* Customer quote */}
       <section className="tally-section">
         <div className="tally__container">
-          <p className="tally-quote">We stopped dreading Fridays — the queue chases, we just get paid.</p>
+          <p className="tally-quote">We stopped dreading Fridays — the queue follows up, we just get paid.</p>
           <div className="tally-quote__byline">
             <strong>COO · 22-person design studio · illustrative pilot quote</strong>
             <span>Service firm · overdue queue cleared in weeks</span>
@@ -318,7 +318,7 @@ export default function LandingPage() {
               Clear your oldest invoice this <span className="italic-accent">afternoon</span>.
             </h2>
             <p className="tally-cta__sub">
-              Upload the CSV, preview the 4-step chase, export the vault — all before standup runs long.
+              Upload the CSV, preview the 4-step follow-up, export the vault — all before standup runs long.
             </p>
             <Link href="/app" className="tally-tier__cta">
               Open the workbench →

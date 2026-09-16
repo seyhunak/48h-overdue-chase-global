@@ -39,7 +39,7 @@ function AdminInner() {
               <tr key={s._id} className="border-t">
                 <td className="font-mono text-xs">{s.ownerClerkId.slice(0, 8)}…</td>
                 <td>{s.clientName}</td><td>{s.invoiceId}</td>
-                <td>{s.amount}</td><td>{s.status}</td><td>{s.creditsUsed}</td>
+                <td>{s.amount}</td><td>{s.status === "chased" ? "followed up" : s.status}</td><td>{s.creditsUsed}</td>
               </tr>
             ))}
           </tbody>

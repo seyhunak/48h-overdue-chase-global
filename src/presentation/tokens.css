@@ -16,7 +16,7 @@
   --color-ink-2: oklch(52% 0.018 258);
   --color-ink-3: oklch(70% 0.012 258);
 
-  /* Accent — indigo chase signal + lime companion, amber/green support */
+  /* Accent — indigo follow-up signal + lime companion, amber/green support */
   --color-accent: oklch(54% 0.22 268);
   --color-accent-soft: oklch(72% 0.14 268);
   --color-accent-tint: oklch(94% 0.04 268);

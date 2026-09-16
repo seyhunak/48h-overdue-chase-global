@@ -1,8 +1,8 @@
 import type { Metadata } from "next";
 
 export const metadata: Metadata = {
-  title: "Your chase data",
-  description: "Logged and tracked invoices, chase history, and vault log.",
+  title: "Your follow-up data",
+  description: "Logged and tracked invoices, follow-up history, and vault log.",
   alternates: { canonical: "/data" },
 };
 

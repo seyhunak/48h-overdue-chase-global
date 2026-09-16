@@ -45,7 +45,7 @@ function downloadPdf(invoices: Invoice[]) {
     .map((r) => `${r.clientName} | ${r.invoiceId} | ${r.currency} ${r.amount.toFixed(2)} | due ${r.dueDate}`)
     .join("\n");
   // Minimal valid single-page PDF (client-side, no deps)
-  const text = `Overdue Chase Export\n\n${rows}\n`;
+  const text = `Overdue Follow-up Export\n\n${rows}\n`;
   const esc = text.replace(/\\/g, "\\\\").replace(/\(/g, "\\(").replace(/\)/g, "\\)").split("\n");
   const contentStream = `BT /F1 11 Tf 40 760 Td 14 TL ${esc.map((l) => `(${l}) Tj T*`).join(" ")} ET`;
   const objects = [
@@ -64,7 +64,7 @@ function downloadPdf(invoices: Invoice[]) {
   const xref = pdf.length;
   pdf += `xref\n0 ${objects.length + 1}\n0000000000 65535 f \n${offsets.map((o) => `${String(o).padStart(10, "0")} 00000 n `).join("\n")}\n`;
   pdf += `trailer\n<< /Size ${objects.length + 1} /Root 1 0 R >>\nstartxref\n${xref}\n%%EOF`;
-  download("overdue-chase.pdf", pdf, "application/pdf");
+  download("overdue-followup.pdf", pdf, "application/pdf");
 }
 
 function WorkbenchInner() {
@@ -142,7 +142,7 @@ function WorkbenchInner() {
     return (
       <div className="mx-auto max-w-3xl px-4 py-16 text-center">
         <h1 className="font-display text-3xl font-semibold" style={{ color: "var(--color-ink)" }}>Out of credits</h1>
-        <p className="mt-2" style={{ color: "var(--color-muted)" }}>Chasing costs 1 credit per invoice. Top up to keep clearing invoices.</p>
+        <p className="mt-2" style={{ color: "var(--color-muted)" }}>Following up costs 1 credit per invoice. Top up to keep clearing invoices.</p>
         <form action="/api/checkout" method="POST" className="mt-6">
           <button type="submit" className="hallmark-btn hallmark-btn-primary px-6 py-3 font-semibold">
             Buy 100 credits — $99
@@ -205,7 +205,7 @@ function WorkbenchInner() {
         Workbench · 1 credit / invoice
       </p>
       <h1 className="font-display mt-2 text-3xl font-semibold" style={{ color: "var(--color-ink)" }}>
-        Chase workbench
+        Follow-up workbench
       </h1>
       <p className="tnum mt-1" style={{ color: "var(--color-muted)" }}>
         Balance: {balance} credits · 1 credit per invoice
@@ -271,7 +271,7 @@ function WorkbenchInner() {
                     <td>{r.clientName}</td><td>{r.invoiceId}</td>
                     <td>{r.currency} {r.amount.toFixed(2)}</td>
                     <td>{r.dueDate}</td><td>{r.email || "—"}</td><td>{r.daysOverdue}</td>
-                    <td style={{ color: "var(--color-muted)" }}>{isChased ? "chased" : "—"}</td>
+                    <td style={{ color: "var(--color-muted)" }}>{isChased ? "followed up" : "—"}</td>
                   </tr>
                 );
               })}
@@ -287,24 +287,24 @@ function WorkbenchInner() {
           className="hallmark-btn hallmark-btn-primary mt-4 px-5 py-2.5 font-semibold disabled:opacity-50"
         >
           {isAlreadyChased
-            ? `Chased ${parsed.valid.length} invoice(s) — already logged`
-            : `Chase ${parsed.valid.length} invoice(s) — ${parsed.valid.length} credit(s)`}
+            ? `Followed up ${parsed.valid.length} invoice(s) — already logged`
+            : `Follow up ${parsed.valid.length} invoice(s) — ${parsed.valid.length} credit(s)`}
         </button>
         {isAlreadyChased && (
           <p className="mt-2 text-sm" style={{ color: "var(--color-muted)" }}>
-            Chased {chasedIds.length} invoice(s) · used {chasedIds.length} credit(s) · balance now {balance}. Edit the CSV to chase a new batch.
+            Followed up {chasedIds.length} invoice(s) · used {chasedIds.length} credit(s) · balance now {balance}. Edit the CSV to follow up on a new batch.
           </p>
         )}
         {!isAlreadyChased && chasedIds.length === 0 && parsed.valid.length > 0 && (
           <p className="tnum mt-2 text-sm" style={{ color: "var(--color-muted)" }}>
-            Projected balance after chase: {balance - parsed.valid.length}
+            Projected balance after follow-up: {balance - parsed.valid.length}
           </p>
         )}
       </div>
 
       <div className="mt-6 rounded-[10px] border p-4" style={{ borderColor: "var(--color-rule-2)" }}>
         <h2 className="font-semibold" style={{ color: "var(--color-ink)" }}>
-          3. 4-step chase sequence preview{selectedInvoice ? ` (${selectedInvoice.invoiceId})` : ""}
+          3. 4-step follow-up sequence preview{selectedInvoice ? ` (${selectedInvoice.invoiceId})` : ""}
         </h2>
         {parsed.valid.length > 0 && (
           <label className="mt-3 block text-sm" style={{ color: "var(--color-muted)" }}>
@@ -342,13 +342,13 @@ function WorkbenchInner() {
             <p className="mt-2 text-sm" style={{ color: "var(--color-muted)" }}>Loading history…</p>
           )}
           {sortedHistory !== undefined && sortedHistory.length === 0 && (
-            <p className="mt-2 text-sm" style={{ color: "var(--color-muted)" }}>No past chases yet — chase a batch to log it here.</p>
+            <p className="mt-2 text-sm" style={{ color: "var(--color-muted)" }}>No past follow-ups yet — follow up on a batch to log it here.</p>
           )}
           {sortedHistory !== undefined && sortedHistory.length > 0 && (
             <ul className="tnum mt-2 text-sm" style={{ color: "var(--color-muted)" }}>
               {sortedHistory.map((h) => (
                 <li key={h._id}>
-                  {h.clientName} · {h.invoiceId} · status: {h.status} · credits used: {h.creditsUsed}
+                  {h.clientName} · {h.invoiceId} · status: {h.status === "chased" ? "followed up" : h.status} · credits used: {h.creditsUsed}
                 </li>
               ))}
             </ul>
@@ -364,7 +364,7 @@ function WorkbenchInner() {
           )}
         </div>
         <div className="mt-3 flex gap-2">
-          <button onClick={() => download("overdue-chase.csv", toCsv(parsed.valid), "text/csv")} className="hallmark-btn rounded-md border px-4 py-2 text-sm" style={{ borderColor: "var(--color-rule-2)" }}>
+          <button onClick={() => download("overdue-followup.csv", toCsv(parsed.valid), "text/csv")} className="hallmark-btn rounded-md border px-4 py-2 text-sm" style={{ borderColor: "var(--color-rule-2)" }}>
             Export CSV
           </button>
           <button onClick={() => downloadPdf(parsed.valid)} className="hallmark-btn rounded-md border px-4 py-2 text-sm" style={{ borderColor: "var(--color-rule-2)" }}>

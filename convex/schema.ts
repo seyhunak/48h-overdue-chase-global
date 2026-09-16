@@ -65,6 +65,9 @@ export default defineSchema({
     currency: v.string(),
     dueDate: v.string(),
     recipientEmail: v.optional(v.string()),
+    channel: v.optional(
+      v.union(v.literal("email"), v.literal("whatsapp"), v.literal("sms"), v.literal("voice")),
+    ),
     stepKey: v.union(
       v.literal("pre-due"),
       v.literal("due"),
@@ -106,6 +109,9 @@ export default defineSchema({
     schedulerEnabled: v.boolean(),
     sendWindowStart: v.number(),
     sendWindowEnd: v.number(),
+    composioKey: v.optional(v.string()),
+    composioUser: v.optional(v.string()),
+    composioVerifiedAt: v.optional(v.number()),
     updatedAt: v.number(),
   }).index("by_owner", ["ownerClerkId"]),
 });

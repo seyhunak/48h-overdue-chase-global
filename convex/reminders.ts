@@ -213,6 +213,7 @@ async function sweepOwner(ctx: any, ownerClerkId: string, nowMs: number): Promis
       currency,
       dueDate: dueDateStr,
       recipientEmail,
+      channel: "email",
       stepKey,
       subject: copy.subject,
       body: copy.body,
@@ -443,6 +444,9 @@ export const queueForInvoice = mutation({
     currency: v.string(),
     dueDate: v.string(),
     recipientEmail: v.optional(v.string()),
+    channel: v.optional(
+      v.union(v.literal("email"), v.literal("whatsapp"), v.literal("sms"), v.literal("voice")),
+    ),
     stepKey: v.union(
       v.literal("pre-due"),
       v.literal("due"),
@@ -481,6 +485,7 @@ export const queueForInvoice = mutation({
       currency: args.currency,
       dueDate: args.dueDate,
       recipientEmail,
+      channel: args.channel ?? "email",
       stepKey: args.stepKey,
       subject: args.subject,
       body: args.body,
@@ -595,6 +600,124 @@ export const setUnsubscribed = mutation({
   },
 });
 
+export const setChannel = mutation({
+  args: {
+    ownerClerkId: v.string(),
+    reminderId: v.id("reminders"),
+    channel: v.union(v.literal("email"), v.literal("whatsapp"), v.literal("sms"), v.literal("voice")),
+  },
+  handler: async (ctx: any, args: any) => {
+    const row = await ctx.db.get(args.reminderId);
+    if (!row || row.ownerClerkId !== args.ownerClerkId) throw new Error("reminder not found");
+    if (row.status !== "pending_approval") throw new Error(`cannot change channel from status ${row.status}`);
+    await ctx.db.patch(row._id, { channel: args.channel });
+    return await ctx.db.get(row._id);
+  },
+});
+
+export const reopen = mutation({
+  args: { ownerClerkId: v.string(), invoiceId: v.string() },
+  handler: async (ctx: any, args: any) => {
+    const now = Date.now();
+    const state = await getStateRow(ctx, args.ownerClerkId, args.invoiceId);
+    if (state) {
+      // Reopen: paid=false, keep touches/history/lastTouchAt.
+      await ctx.db.patch(state._id, { paid: false, updatedAt: now });
+    } else {
+      await ctx.db.insert("invoiceState", {
+        ownerClerkId: args.ownerClerkId,
+        invoiceId: args.invoiceId,
+        touches: 0,
+        paid: false,
+        unsubscribed: false,
+        updatedAt: now,
+      });
+    }
+    return { invoiceId: args.invoiceId, paid: false };
+  },
+});
+
+export const resubscribe = mutation({
+  args: { ownerClerkId: v.string(), invoiceId: v.string() },
+  handler: async (ctx: any, args: any) => {
+    const now = Date.now();
+    const state = await getStateRow(ctx, args.ownerClerkId, args.invoiceId);
+    if (state) {
+      await ctx.db.patch(state._id, { unsubscribed: false, updatedAt: now });
+    } else {
+      await ctx.db.insert("invoiceState", {
+        ownerClerkId: args.ownerClerkId,
+        invoiceId: args.invoiceId,
+        touches: 0,
+        paid: false,
+        unsubscribed: false,
+        updatedAt: now,
+      });
+    }
+    return { invoiceId: args.invoiceId, unsubscribed: false };
+  },
+});
+
+export const saveComposioSettings = mutation({
+  args: { ownerClerkId: v.string(), composioUser: v.string(), composioKey: v.string() },
+  handler: async (ctx: any, args: any) => {
+    const user = (args.composioUser ?? "").trim() || "default";
+    const key = (args.composioKey ?? "").trim();
+    if (!key) throw new Error("composioKey required");
+    if (user.length > 120) throw new Error("composioUser too long");
+    const now = Date.now();
+    const existing = await getSettingsRow(ctx, args.ownerClerkId);
+    if (existing) {
+      await ctx.db.patch(existing._id, { composioUser: user, composioKey: key, updatedAt: now });
+      return await ctx.db.get(existing._id);
+    }
+    const id = await ctx.db.insert("settings", {
+      ownerClerkId: args.ownerClerkId,
+      schedulerEnabled: false,
+      sendWindowStart: DEFAULT_WINDOW_START,
+      sendWindowEnd: DEFAULT_WINDOW_END,
+      composioUser: user,
+      composioKey: key,
+      updatedAt: now,
+    });
+    return await ctx.db.get(id);
+  },
+});
+
+export const setComposioVerified = mutation({
+  args: { ownerClerkId: v.string(), verifiedAt: v.number() },
+  handler: async (ctx: any, args: any) => {
+    const now = Date.now();
+    const existing = await getSettingsRow(ctx, args.ownerClerkId);
+    if (existing) {
+      await ctx.db.patch(existing._id, { composioVerifiedAt: args.verifiedAt, updatedAt: now });
+      return await ctx.db.get(existing._id);
+    }
+    const id = await ctx.db.insert("settings", {
+      ownerClerkId: args.ownerClerkId,
+      schedulerEnabled: false,
+      sendWindowStart: DEFAULT_WINDOW_START,
+      sendWindowEnd: DEFAULT_WINDOW_END,
+      composioVerifiedAt: args.verifiedAt,
+      updatedAt: now,
+    });
+    return await ctx.db.get(id);
+  },
+});
+
+export const getComposioStatus = query({
+  args: { ownerClerkId: v.string() },
+  handler: async (ctx: any, args: any) => {
+    const row = await getSettingsRow(ctx, args.ownerClerkId);
+    return {
+      ownerClerkId: args.ownerClerkId,
+      hasKey: Boolean(row?.composioKey),
+      composioUser: typeof row?.composioUser === "string" && row.composioUser ? row.composioUser : "default",
+      composioVerifiedAt: typeof row?.composioVerifiedAt === "number" ? row.composioVerifiedAt : null,
+    };
+  },
+});
+
 // Manual per-owner sweep (wired to the workbench "Run due sweep now" button).
 // This is an explicit human trigger, so it runs regardless of the scheduler
 // toggle; the cron path below is what honors schedulerEnabled.
@@ -634,7 +757,13 @@ export const getByIdForOwner = query({
 });
 
 export const markSent = mutation({
-  args: { ownerClerkId: v.string(), reminderId: v.id("reminders") },
+  args: {
+    ownerClerkId: v.string(),
+    reminderId: v.id("reminders"),
+    channel: v.optional(
+      v.union(v.literal("email"), v.literal("whatsapp"), v.literal("sms"), v.literal("voice")),
+    ),
+  },
   handler: async (ctx: any, args: any) => {
     const row = await ctx.db.get(args.reminderId);
     if (!row || row.ownerClerkId !== args.ownerClerkId) throw new Error("reminder not found");
@@ -666,12 +795,14 @@ export const markSent = mutation({
         updatedAt: now,
       });
     }
-    // Vault audit log — NO credit charge at send time (charged at chase).
+    // Vault audit log — NO credit charge at send time (charged at follow-up).
+    // Applies identically to EVERY channel.
+    const channel = args.channel ?? (row as any).channel ?? "email";
     await ctx.db.insert("vault", {
       ownerClerkId: args.ownerClerkId,
       kind: "reminder_sent",
-      title: `${row.clientName} · ${row.invoiceId} · ${row.stepKey}`,
-      payload: JSON.stringify({ timestamp: now, payloadHash: row.payloadHash }),
+      title: `${row.clientName} · ${row.invoiceId} · ${row.stepKey} · ${channel}`,
+      payload: JSON.stringify({ timestamp: now, payloadHash: row.payloadHash, channel }),
       createdAt: now,
     });
     return await ctx.db.get(row._id);

@@ -7,12 +7,12 @@ import { TopMenu } from "@/presentation/top-menu";
 import Link from "next/link";
 
 export const metadata: Metadata = {
-  title: "OverdueChase — Stop chasing overdue invoices",
+  title: "ClearDue — Clear overdue invoices without the awkward follow-up",
   description:
-    "Founders at 5-50 person service firms recover overdue invoices in minutes: upload CSV, validate, send a 4-step chase sequence, export PDF + CSV.",
+    "Founders at 5-50 person service firms recover overdue invoices in minutes: upload CSV, validate, send a 4-step follow-up sequence, export PDF + CSV.",
   metadataBase: new URL(process.env.NEXT_PUBLIC_SITE_URL ?? "http://localhost:3000"),
   openGraph: {
-    title: "OverdueChase — Stop chasing overdue invoices",
+    title: "ClearDue — Clear overdue invoices without the awkward follow-up",
     description: "Upload 10 invoices — see cleared. 100 credits $99. Free 3 on signup.",
     type: "website",
   },
@@ -21,8 +21,8 @@ export const metadata: Metadata = {
 const jsonLd = {
   "@context": "https://schema.org",
   "@type": "Product",
-  name: "OverdueChase",
-  description: "Overdue invoice chase workbench for service firms.",
+  name: "ClearDue",
+  description: "Overdue invoice follow-up workbench for service firms.",
     offers: { "@type": "Offer", price: "99", priceCurrency: "USD" },
 };
 
@@ -45,7 +45,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
           <footer className="tally-footer">
             <div className="tally__container">
               <p className="tally-footer__statement">
-                OverdueChase is a chase console for firms that would rather get <span className="italic-accent">paid</span> than chase.
+                ClearDue is a follow-up console for firms that would rather get <span className="italic-accent">paid</span> than follow up.
               </p>
               <div className="tally-footer__row">
                 <div className="tally-footer__col">
@@ -88,8 +88,8 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
                 </div>
               </div>
               <div className="tally-footer__legal">
-                <span>OverdueChase</span>
-                <span>© 2026 OverdueChase · 100 credits $99 · 3 free on signup</span>
+                <span>ClearDue</span>
+                <span>© 2026 ClearDue · 100 credits $99 · 3 free on signup</span>
               </div>
             </div>
           </footer>

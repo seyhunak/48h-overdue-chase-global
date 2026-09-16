@@ -58,7 +58,7 @@ export function TopMenu() {
   return (
     <div className="tally-navwrap">
       <header className="tally-nav" style={{ fontFamily: "var(--font-body)" }}>
-        <Link href="/" className="flex items-center gap-2" aria-label="OverdueChase home">
+        <Link href="/" className="flex items-center gap-2" aria-label="ClearDue home">
           <span
             className="flex h-7 w-7 items-center justify-center rounded-md"
             style={{ background: "var(--color-accent)" }}
@@ -66,7 +66,7 @@ export function TopMenu() {
             <ShieldCheck className="h-4 w-4" style={{ color: "var(--color-accent-ink)" }} aria-hidden />
           </span>
           <span className="font-display text-base font-semibold" style={{ color: "var(--color-ink)" }}>
-            OverdueChase
+            ClearDue
           </span>
         </Link>
         <nav className="tally-nav__links ml-2" aria-label="Primary">
@@ -75,6 +75,9 @@ export function TopMenu() {
           </Link>
           <Link href="/data" className="tally-nav__link">
             Data
+          </Link>
+          <Link href="/connect" className="tally-nav__link">
+            Connect
           </Link>
           <Link href="/admin" className="tally-nav__link">
             Admin

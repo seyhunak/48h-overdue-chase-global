@@ -1,7 +1,7 @@
 "use client";
 
 import { useUser } from "@clerk/nextjs";
-import { useQuery } from "convex/react";
+import { useMutation, useQuery } from "convex/react";
 import Link from "next/link";
 import { useState } from "react";
 import { getConvexUrl, getClerkPublishableKey } from "@/infrastructure/env";
@@ -73,6 +73,12 @@ function DataInner() {
     ready ? { ownerClerkId: user!.id } : "skip",
   ) as BoundaryRow[] | undefined;
   const [expanded, setExpanded] = useState<string[]>([]);
+  const [opBusy, setOpBusy] = useState<string | null>(null);
+  const [opError, setOpError] = useState<string | null>(null);
+  const doMarkPaid = useMutation((api as any).reminders.markPaid);
+  const doReopen = useMutation((api as any).reminders.reopen);
+  const doUnsub = useMutation((api as any).reminders.setUnsubscribed);
+  const doResub = useMutation((api as any).reminders.resubscribe);
 
   if (!isLoaded) return <div className="mx-auto max-w-6xl px-4 py-12">Loading…</div>;
   if (!user)
@@ -101,10 +107,10 @@ function DataInner() {
     <div className="mx-auto max-w-6xl px-4 py-10" style={{ background: "var(--color-paper)" }}>
       <p className="mono-label" style={{ color: "var(--color-muted)" }}>Data · tracked invoices</p>
       <h1 className="font-display mt-2 text-3xl font-semibold" style={{ color: "var(--color-ink)" }}>
-        Your chase data
+        Your follow-up data
       </h1>
       <p className="tnum mt-1 text-sm" style={{ color: "var(--color-muted)" }}>
-        {totalChased} invoice(s) chased · {creditsSpent} credit(s) spent
+        {totalChased} invoice(s) followed up · {creditsSpent} credit(s) spent
       </p>
 
       <div className="mt-6 rounded-[10px] border p-4" style={{ borderColor: "var(--color-rule-2)" }}>
@@ -114,7 +120,7 @@ function DataInner() {
           <p className="mt-2 text-sm" style={{ color: "var(--color-muted)" }}>Loading…</p>
         ) : boundary.length === 0 ? (
           <p className="mt-2 text-sm" style={{ color: "var(--color-muted)" }}>
-            Nothing tracked yet. <Link className="underline" href="/app">Chase invoices in the workbench →</Link>
+            Nothing tracked yet. <Link className="underline" href="/app">Follow up on invoices in the workbench →</Link>
           </p>
         ) : (
           <>
@@ -122,7 +128,7 @@ function DataInner() {
               <table className="tnum w-full text-sm">
                 <thead>
                   <tr className="mono-label text-left" style={{ color: "var(--color-muted)" }}>
-                    <th>Invoice</th><th>Client</th><th>Due</th><th>Days±</th><th>Step due now</th><th>Touches</th><th>Flags</th><th>Skip reason</th>
+                    <th>Invoice</th><th>Client</th><th>Due</th><th>Days±</th><th>Step due now</th><th>Touches</th><th>Status</th><th>Flags</th><th>Skip reason</th><th>Operator</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -130,6 +136,24 @@ function DataInner() {
                     const skip = b.skipReasons.length > 0 ? b.skipReasons[0] : "—";
                     const flags = [b.paid ? "paid" : null, b.unsubscribed ? "unsub" : null].filter(Boolean);
                     const isOpen = expanded.includes(b.invoiceId);
+                    const derivedStatus = b.paid ? "paid" : b.unsubscribed ? "unsubscribed" : `active${b.dueStep ? ` · ${b.dueStep} due` : ""}`;
+                    const runOp = async (kind: "paid" | "reopen" | "unsub" | "resub") => {
+                      if (!user) return;
+                      setOpError(null);
+                      setOpBusy(`${b.invoiceId}:${kind}`);
+                      try {
+                        const ownerClerkId = user.id;
+                        if (kind === "paid") await doMarkPaid({ ownerClerkId, invoiceId: b.invoiceId, paid: true });
+                        else if (kind === "reopen") await doReopen({ ownerClerkId, invoiceId: b.invoiceId });
+                        else if (kind === "unsub") await doUnsub({ ownerClerkId, invoiceId: b.invoiceId, unsubscribed: true });
+                        else await doResub({ ownerClerkId, invoiceId: b.invoiceId });
+                      } catch (e: any) {
+                        setOpError(e?.message ?? "operator action failed");
+                      } finally {
+                        setOpBusy(null);
+                      }
+                    };
+                    const busyFor = (k: string) => opBusy === `${b.invoiceId}:${k}`;
                     return (
                       <tr key={b.invoiceId} className="border-t">
                         <td>
@@ -148,12 +172,42 @@ function DataInner() {
                         <td className="tnum">{fmtDiff(b.diffDays)}</td>
                         <td>{b.dueStep ?? "—"}</td>
                         <td className="tnum">{b.touches}/5</td>
+                        <td>
+                          <span
+                            className="mono-label rounded-full border px-2 py-0.5"
+                            style={{ borderColor: "var(--color-rule-2)", background: "var(--color-chip-bg)", color: "var(--color-ink)" }}
+                          >
+                            {derivedStatus}
+                          </span>
+                        </td>
                         <td>{flags.length > 0 ? flags.join(" · ") : "—"}</td>
                         <td
                           title={b.skipReasons.length > 1 ? b.skipReasons.join(" · ") : undefined}
                           style={{ color: "var(--color-muted)" }}
                         >
                           {skip}
+                        </td>
+                        <td>
+                          <div className="flex flex-wrap items-center gap-1 py-1">
+                            {!b.paid ? (
+                              <button type="button" disabled={busyFor("paid")} onClick={() => runOp("paid")} className="rounded-md border px-2 py-1 text-xs disabled:opacity-50" style={{ borderColor: "var(--color-rule-2)" }}>
+                                {busyFor("paid") ? "…" : "Mark paid"}
+                              </button>
+                            ) : (
+                              <button type="button" disabled={busyFor("reopen")} onClick={() => runOp("reopen")} className="rounded-md border px-2 py-1 text-xs disabled:opacity-50" style={{ borderColor: "var(--color-rule-2)" }}>
+                                {busyFor("reopen") ? "…" : "Reopen"}
+                              </button>
+                            )}
+                            {!b.unsubscribed ? (
+                              <button type="button" disabled={busyFor("unsub")} onClick={() => runOp("unsub")} className="rounded-md border px-2 py-1 text-xs disabled:opacity-50" style={{ borderColor: "var(--color-rule-2)" }}>
+                                {busyFor("unsub") ? "…" : "Unsubscribe"}
+                              </button>
+                            ) : (
+                              <button type="button" disabled={busyFor("resub")} onClick={() => runOp("resub")} className="rounded-md border px-2 py-1 text-xs disabled:opacity-50" style={{ borderColor: "var(--color-rule-2)" }}>
+                                {busyFor("resub") ? "…" : "Resubscribe"}
+                              </button>
+                            )}
+                          </div>
                         </td>
                       </tr>
                     );
@@ -211,6 +265,11 @@ function DataInner() {
                 ) : null,
               )}
             </div>
+            {opError && (
+              <p className="mt-2 text-sm" style={{ color: "var(--color-warning)" }}>
+                Operator error: {opError}
+              </p>
+            )}
           </>
         )}
       </div>
@@ -221,7 +280,7 @@ function DataInner() {
           <p className="mt-2 text-sm" style={{ color: "var(--color-muted)" }}>Loading…</p>
         ) : submissions.length === 0 ? (
           <p className="mt-2 text-sm" style={{ color: "var(--color-muted)" }}>
-            Nothing tracked yet. <Link className="underline" href="/app">Chase invoices in the workbench →</Link>
+            Nothing tracked yet. <Link className="underline" href="/app">Follow up on invoices in the workbench →</Link>
           </p>
         ) : (
           <table className="tnum mt-2 w-full text-sm">
@@ -234,7 +293,7 @@ function DataInner() {
               {submissions.map((r: any) => (
                 <tr key={r._id} className="border-t">
                   <td>{r.clientName}</td><td>{r.invoiceId}</td>
-                  <td>{Number(r.amount).toFixed(2)}</td><td>{r.status}</td>
+                  <td>{Number(r.amount).toFixed(2)}</td><td>{r.status === "chased" ? "followed up" : r.status}</td>
                   <td>{r.creditsUsed}</td><td>{r.createdAt ? fmtDate(r.createdAt) : "—"}</td>
                 </tr>
               ))}

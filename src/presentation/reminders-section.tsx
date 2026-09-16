@@ -9,6 +9,7 @@ type Reminder = {
   clientName: string;
   invoiceId: string;
   recipientEmail?: string;
+  channel?: "email" | "whatsapp" | "sms" | "voice";
   stepKey: string;
   subject: string;
   scheduledFor: number;
@@ -18,6 +19,8 @@ type Reminder = {
   sentAt?: number;
   createdAt: number;
 };
+
+const CHANNELS = ["email", "whatsapp", "sms", "voice"] as const;
 
 function fmtUtc(ms: number): string {
   try {
@@ -41,10 +44,12 @@ export function ReminderDispatchSection({ userId }: { userId: string }) {
   const doSweep = useMutation((api as any).reminders.runDueSweepForOwner);
   const doApprove = useMutation((api as any).reminders.approve);
   const doSkip = useMutation((api as any).reminders.skip);
+  const doSetChannel = useMutation((api as any).reminders.setChannel);
 
   const [busy, setBusy] = useState<string[]>([]);
   const [rowError, setRowError] = useState<Record<string, string>>({});
   const [rowOk, setRowOk] = useState<Record<string, string>>({});
+  const [rowChannel, setRowChannel] = useState<Record<string, string>>({});
   const [sweepMsg, setSweepMsg] = useState<string | null>(null);
 
   const enabled = Boolean(settings?.schedulerEnabled);
@@ -78,10 +83,24 @@ export function ReminderDispatchSection({ userId }: { userId: string }) {
     }
   }
 
+  async function handleChannelChange(r: Reminder, channel: string) {
+    setRowChannel((m) => ({ ...m, [r._id]: channel }));
+    setRowError((m) => ({ ...m, [r._id]: "" }));
+    markBusy(r._id, true);
+    try {
+      await doSetChannel({ ownerClerkId: userId, reminderId: r._id, channel });
+    } catch (e: any) {
+      setRowError((m) => ({ ...m, [r._id]: e?.message ?? "channel update failed" }));
+    } finally {
+      markBusy(r._id, false);
+    }
+  }
+
   async function handleApproveAndSend(r: Reminder) {
     setRowError((m) => ({ ...m, [r._id]: "" }));
     setRowOk((m) => ({ ...m, [r._id]: "" }));
     markBusy(r._id, true);
+    const channel = rowChannel[r._id] ?? r.channel ?? "email";
     try {
       await doApprove({ ownerClerkId: userId, reminderId: r._id });
       const res = await fetch("/api/reminders/send", {
@@ -91,12 +110,13 @@ export function ReminderDispatchSection({ userId }: { userId: string }) {
         // prioritizes explicit `to` > reminder.recipientEmail > RESEND_TO.
         body: JSON.stringify({
           reminderId: r._id,
+          channel,
           ...(r.recipientEmail?.trim() ? { to: r.recipientEmail.trim() } : {}),
         }),
       });
       const data = await res.json().catch(() => ({}));
       if (!res.ok) throw new Error(data?.error ?? `send failed (${res.status})`);
-      setRowOk((m) => ({ ...m, [r._id]: "Approved + sent." }));
+      setRowOk((m) => ({ ...m, [r._id]: `Approved + sent via ${channel}.` }));
     } catch (e: any) {
       setRowError((m) => ({ ...m, [r._id]: e?.message ?? "failed" }));
     } finally {
@@ -163,7 +183,7 @@ export function ReminderDispatchSection({ userId }: { userId: string }) {
       )}
       {pending !== undefined && pending.length === 0 && (
         <p className="mt-2 text-sm" style={{ color: "var(--color-muted)" }}>
-          Queue is empty — run a sweep or chase new invoices.
+          Queue is empty — run a sweep or follow up on new invoices.
         </p>
       )}
       {pending !== undefined && pending.length > 0 && (
@@ -176,6 +196,7 @@ export function ReminderDispatchSection({ userId }: { userId: string }) {
                 <th>Recipient</th>
                 <th>Step</th>
                 <th>Subject</th>
+                <th>Channel</th>
                 <th>Scheduled</th>
                 <th>Actions</th>
               </tr>
@@ -189,6 +210,22 @@ export function ReminderDispatchSection({ userId }: { userId: string }) {
                   <td>{r.stepKey}</td>
                   <td className="max-w-[280px] truncate" title={r.subject}>
                     {r.subject}
+                  </td>
+                  <td>
+                    <select
+                      aria-label={`Channel for ${r.invoiceId}`}
+                      className="rounded-md border p-1 text-xs"
+                      style={{ borderColor: "var(--color-rule-2)", color: "var(--color-ink)" }}
+                      value={rowChannel[r._id] ?? r.channel ?? "email"}
+                      disabled={isBusy(r._id)}
+                      onChange={(e) => handleChannelChange(r, e.target.value)}
+                    >
+                      {CHANNELS.map((c) => (
+                        <option key={c} value={c}>
+                          {c}
+                        </option>
+                      ))}
+                    </select>
                   </td>
                   <td>{fmtUtc(r.scheduledFor)}</td>
                   <td>

@@ -1,8 +1,8 @@
-# OverdueChase — 48h fix-pack
+# ClearDue — 48h fix-pack
 
-**Problem:** Founders at 5–50 person service firms waste 5–15h/week chasing overdue invoices.
+**Problem:** Founders at 5–50 person service firms waste 5–15h/week following up on overdue invoices.
 **Buyer:** Founder / COO.
-**Offer:** $99 = 100 credits ($0.99/credit, free 3 on signup), 1 credit per invoice chased.
+**Offer:** $99 = 100 credits ($0.99/credit, free 3 on signup), 1 credit per invoice followed up.
 
 ## Stack
 
@@ -32,6 +32,6 @@ credits via `credits:getOrCreate`.
 ## Flow
 
 Register/login (Clerk) → 3 free credits → upload overdue CSV in `/app` →
-validation table → 4-step chase preview (pre-due/due/+7/+14/+30) → chase
+validation table → 4-step follow-up preview (pre-due/due/+7/+14/+30) → follow up
 (1 credit/invoice) → vault + PDF/CSV export → Buy 100 ($99) when empty.
 `/admin` (role=admin) shows submissions + credits log.
