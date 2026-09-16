@@ -124,22 +124,49 @@ function buildStepCopy(stepKey: string, clientName: string, invoiceId: string, a
   }
 }
 
+// Tracked-invoice source: submissions (workbench chase writes). Dedupe by
+// invoiceId, newest row wins for amount/dueDate/clientName/email.
+async function getTrackedInvoices(ctx: any, ownerClerkId: string) {
+  const subs = await ctx.db
+    .query("submissions")
+    .withIndex("by_owner", (q: any) => q.eq("ownerClerkId", ownerClerkId))
+    .order("desc")
+    .collect();
+  const byId = new Map<string, any>();
+  for (const s of subs) {
+    if (typeof s.invoiceId !== "string" || !s.invoiceId) continue;
+    if (!byId.has(s.invoiceId)) byId.set(s.invoiceId, s);
+  }
+  return [...byId.values()];
+}
+
 type SweepResult = { queued: number; skipped: Array<{ invoiceId: string; reason: string }> };
 
 // Shared sweep for ONE owner. Creates ONLY pending_approval rows — never sends.
+// Source: submissions (tracked invoices). The legacy `invoices` table is left
+// untouched in schema but no longer read here.
 async function sweepOwner(ctx: any, ownerClerkId: string, nowMs: number): Promise<SweepResult> {
   const settings = await getSettingsRow(ctx, ownerClerkId);
   const startH = settings?.sendWindowStart ?? DEFAULT_WINDOW_START;
   const endH = settings?.sendWindowEnd ?? DEFAULT_WINDOW_END;
-  const invoices = await ctx.db
-    .query("invoices")
-    .withIndex("by_owner", (q: any) => q.eq("ownerClerkId", ownerClerkId))
-    .collect();
+  const tracked = await getTrackedInvoices(ctx, ownerClerkId);
   const result: SweepResult = { queued: 0, skipped: [] };
-  for (const inv of invoices) {
-    const due = new Date(inv.dueDate);
-    if (Number.isNaN(due.getTime())) {
-      result.skipped.push({ invoiceId: inv.invoiceId, reason: "invalid dueDate" });
+  for (const sub of tracked) {
+    const invoiceId: string = sub.invoiceId;
+    const clientName: string = sub.clientName ?? "";
+    const amount: number = typeof sub.amount === "number" ? sub.amount : 0;
+    const currency: string =
+      typeof sub.currency === "string" && sub.currency ? sub.currency : "USD";
+    const dueDateStr: string = typeof sub.dueDate === "string" ? sub.dueDate : "";
+    const emailRaw =
+      typeof sub.recipientEmail === "string"
+        ? sub.recipientEmail
+        : typeof sub.email === "string"
+          ? sub.email
+          : "";
+    const due = new Date(dueDateStr);
+    if (!dueDateStr || Number.isNaN(due.getTime())) {
+      result.skipped.push({ invoiceId, reason: "invalid dueDate" });
       continue;
     }
     const dueMidnight = Date.UTC(due.getUTCFullYear(), due.getUTCMonth(), due.getUTCDate());
@@ -150,46 +177,41 @@ async function sweepOwner(ctx: any, ownerClerkId: string, nowMs: number): Promis
     );
     const stepKey = stepForDiff(Math.floor((nowMidnight - dueMidnight) / 86400000));
     if (!stepKey) {
-      result.skipped.push({ invoiceId: inv.invoiceId, reason: "no ladder step due" });
+      result.skipped.push({ invoiceId, reason: "no ladder step due" });
       continue;
     }
-    const state = await getStateRow(ctx, ownerClerkId, inv.invoiceId);
+    const state = await getStateRow(ctx, ownerClerkId, invoiceId);
     if (state?.paid) {
-      result.skipped.push({ invoiceId: inv.invoiceId, reason: "paid" });
+      result.skipped.push({ invoiceId, reason: "paid" });
       continue;
     }
     if (state?.unsubscribed) {
-      result.skipped.push({ invoiceId: inv.invoiceId, reason: "unsubscribed" });
+      result.skipped.push({ invoiceId, reason: "unsubscribed" });
       continue;
     }
     if ((state?.touches ?? 0) >= MAX_TOUCHES_PER_INVOICE) {
-      result.skipped.push({ invoiceId: inv.invoiceId, reason: "max touches reached" });
+      result.skipped.push({ invoiceId, reason: "max touches reached" });
       continue;
     }
     if (state?.lastTouchAt && sameUtcDay(state.lastTouchAt, nowMs)) {
-      result.skipped.push({ invoiceId: inv.invoiceId, reason: "already touched today" });
+      result.skipped.push({ invoiceId, reason: "already touched today" });
       continue;
     }
-    const existing = await findReminderForStep(ctx, ownerClerkId, inv.invoiceId, stepKey);
+    const existing = await findReminderForStep(ctx, ownerClerkId, invoiceId, stepKey);
     if (existing) {
-      result.skipped.push({ invoiceId: inv.invoiceId, reason: `duplicate step ${stepKey}` });
+      result.skipped.push({ invoiceId, reason: `duplicate step ${stepKey}` });
       continue;
     }
-    const copy = buildStepCopy(stepKey, inv.clientName, inv.invoiceId, inv.amount, inv.currency, inv.dueDate);
+    const copy = buildStepCopy(stepKey, clientName, invoiceId, amount, currency, dueDateStr);
     const payloadHash = await sha256Hex(copy.subject + copy.body);
-    const recipientEmail =
-      typeof inv.recipientEmail === "string"
-        ? inv.recipientEmail.trim()
-        : typeof inv.email === "string"
-          ? inv.email.trim()
-          : "";
+    const recipientEmail = typeof emailRaw === "string" ? emailRaw.trim() : "";
     await ctx.db.insert("reminders", {
       ownerClerkId,
-      invoiceId: inv.invoiceId,
-      clientName: inv.clientName,
-      amount: inv.amount,
-      currency: inv.currency,
-      dueDate: inv.dueDate,
+      invoiceId,
+      clientName,
+      amount,
+      currency,
+      dueDate: dueDateStr,
       recipientEmail,
       stepKey,
       subject: copy.subject,
@@ -205,7 +227,7 @@ async function sweepOwner(ctx: any, ownerClerkId: string, nowMs: number): Promis
     } else {
       await ctx.db.insert("invoiceState", {
         ownerClerkId,
-        invoiceId: inv.invoiceId,
+        invoiceId,
         currentStep: stepKey,
         touches: 0,
         paid: false,
@@ -250,6 +272,114 @@ export const getStates = query({
       .query("invoiceState")
       .withIndex("by_owner", (q: any) => q.eq("ownerClerkId", args.ownerClerkId))
       .collect();
+  },
+});
+
+// Boundary map: pure read over tracked invoices (submissions, newest wins).
+// Left-joins invoiceState by invoiceId + reminders by invoiceId, computes
+// diffDays / dueStep live, and skipReasons[] in the SAME gate order as
+// sweepOwner. No writes.
+export const getBoundaryMap = query({
+  args: { ownerClerkId: v.string() },
+  handler: async (ctx: any, args: any) => {
+    const nowMs = Date.now();
+    const nowD = new Date(nowMs);
+    const nowMidnight = Date.UTC(nowD.getUTCFullYear(), nowD.getUTCMonth(), nowD.getUTCDate());
+    const tracked = await getTrackedInvoices(ctx, args.ownerClerkId);
+    const stateRows = await ctx.db
+      .query("invoiceState")
+      .withIndex("by_owner", (q: any) => q.eq("ownerClerkId", args.ownerClerkId))
+      .collect();
+    const stateById = new Map<string, any>();
+    for (const s of stateRows) stateById.set(s.invoiceId, s);
+    const reminderRows = await ctx.db
+      .query("reminders")
+      .withIndex("by_owner", (q: any) => q.eq("ownerClerkId", args.ownerClerkId))
+      .collect();
+    const remindersById = new Map<string, any[]>();
+    for (const r of reminderRows) {
+      const list = remindersById.get(r.invoiceId) ?? [];
+      list.push(r);
+      remindersById.set(r.invoiceId, list);
+    }
+    const out: any[] = [];
+    for (const sub of tracked) {
+      const invoiceId: string = sub.invoiceId;
+      const clientName: string = sub.clientName ?? "";
+      const amount: number = typeof sub.amount === "number" ? sub.amount : 0;
+      const currency: string =
+        typeof sub.currency === "string" && sub.currency ? sub.currency : "USD";
+      const dueDateStr: string = typeof sub.dueDate === "string" ? sub.dueDate : "";
+      const email =
+        typeof sub.recipientEmail === "string" && sub.recipientEmail
+          ? sub.recipientEmail
+          : typeof sub.email === "string"
+            ? sub.email
+            : "";
+      const due = new Date(dueDateStr);
+      const valid = Boolean(dueDateStr) && !Number.isNaN(due.getTime());
+      const diffDays = valid
+        ? Math.floor(
+            (nowMidnight - Date.UTC(due.getUTCFullYear(), due.getUTCMonth(), due.getUTCDate())) /
+              86400000,
+          )
+        : null;
+      const dueStep = diffDays === null ? null : stepForDiff(diffDays);
+      const state = stateById.get(invoiceId) ?? null;
+      const touches: number = state?.touches ?? 0;
+      const paid: boolean = Boolean(state?.paid);
+      const unsubscribed: boolean = Boolean(state?.unsubscribed);
+      const lastTouchAt: number | null =
+        typeof state?.lastTouchAt === "number" ? state.lastTouchAt : null;
+      const rows = (remindersById.get(invoiceId) ?? [])
+        .slice()
+        .sort((a: any, b: any) => (a.scheduledFor ?? 0) - (b.scheduledFor ?? 0));
+      const steps = rows.map((r: any) => ({
+        stepKey: r.stepKey,
+        status: r.status,
+        scheduledFor: r.scheduledFor,
+        sentAt: typeof r.sentAt === "number" ? r.sentAt : null,
+        attempts: typeof r.attempts === "number" ? r.attempts : 0,
+        lastError: typeof r.lastError === "string" ? r.lastError : null,
+      }));
+      // SAME gate order as sweepOwner.
+      const skipReasons: string[] = [];
+      if (!valid) {
+        skipReasons.push("invalid dueDate");
+      } else if (!dueStep) {
+        skipReasons.push("no ladder step due");
+      }
+      if (paid) skipReasons.push("paid");
+      if (unsubscribed) skipReasons.push("unsubscribed");
+      if (touches >= MAX_TOUCHES_PER_INVOICE) skipReasons.push("max touches reached");
+      if (typeof state?.lastTouchAt === "number" && sameUtcDay(state.lastTouchAt, nowMs)) {
+        skipReasons.push("already touched today");
+      }
+      if (dueStep) {
+        const dup = rows.some((r: any) => r.stepKey === dueStep);
+        if (dup) skipReasons.push(`duplicate step ${dueStep}`);
+      }
+      out.push({
+        invoiceId,
+        clientName,
+        amount,
+        currency,
+        dueDate: dueDateStr,
+        email,
+        diffDays,
+        dueStep,
+        touches,
+        paid,
+        unsubscribed,
+        lastTouchAt,
+        steps,
+        skipReasons,
+        createdAt: typeof sub.createdAt === "number" ? sub.createdAt : 0,
+      });
+    }
+    // Newest first.
+    out.sort((a, b) => (b.createdAt ?? 0) - (a.createdAt ?? 0));
+    return out;
   },
 });
 

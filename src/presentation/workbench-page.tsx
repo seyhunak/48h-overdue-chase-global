@@ -185,6 +185,10 @@ function WorkbenchInner() {
         amount: inv.amount,
         status: "chased",
         creditsUsed: 1,
+        dueDate: inv.dueDate,
+        currency: inv.currency,
+        recipientEmail: inv.email || undefined,
+        email: inv.email || undefined,
       });
     }
     setChasedIds(parsed.valid.map((v) => v.invoiceId));

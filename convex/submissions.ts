@@ -27,6 +27,10 @@ export const record = mutation({
     amount: v.number(),
     status: v.string(),
     creditsUsed: v.number(),
+    dueDate: v.optional(v.string()),
+    currency: v.optional(v.string()),
+    recipientEmail: v.optional(v.string()),
+    email: v.optional(v.string()),
   },
   handler: async (ctx: any, args: any) => {
     return await ctx.db.insert("submissions", { ...args, createdAt: Date.now() });

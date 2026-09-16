@@ -37,6 +37,10 @@ export default defineSchema({
     status: v.string(),
     creditsUsed: v.number(),
     createdAt: v.number(),
+    dueDate: v.optional(v.string()),
+    currency: v.optional(v.string()),
+    recipientEmail: v.optional(v.string()),
+    email: v.optional(v.string()),
   }).index("by_owner", ["ownerClerkId"]),
   credits: defineTable({
     ownerClerkId: v.string(),
