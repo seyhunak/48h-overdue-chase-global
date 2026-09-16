@@ -2,12 +2,24 @@
 
 import { useUser } from "@clerk/nextjs";
 import { useMutation, useQuery } from "convex/react";
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { useSearchParams } from "next/navigation";
 import { api } from "../../convex/_generated/api";
 import { buildChaseSequence, parseCsv, validateInvoiceRow, type Invoice } from "@/domain/invoices";
 import { getConvexUrl, getClerkPublishableKey } from "@/infrastructure/env";
+
+const SAMPLE_CSV = `clientName,invoiceId,amount,currency,dueDate
+Acme Corp,INV-001,1200,USD,2026-07-01
+Globex,INV-002,850.5,USD,2026-07-05
+Initech,INV-003,4300,EUR,2026-07-10
+Umbrella Co,INV-004,975,USD,2026-07-12
+Hooli,INV-005,2500,USD,2026-07-15
+Stark Industries,INV-006,11200,USD,2026-07-18
+Wayne Enterprises,INV-007,640,GBP,2026-07-20
+Massive Dynamic,INV-008,1890,USD,2026-07-22
+Cyberdyne,INV-009,3300,USD,2026-07-25
+Tyrell Corp,INV-010,720,EUR,2026-07-28`;
 
 function toCsv(rows: Invoice[]): string {
   const header = "clientName,invoiceId,amount,currency,dueDate,daysOverdue,status";
@@ -67,9 +79,19 @@ function WorkbenchInner() {
   const ensureCredits = useMutation((api as any).credits.getOrCreate);
   const consumeCredits = useMutation((api as any).credits.consume);
   const recordSubmission = useMutation((api as any).submissions.record);
+  const historyArgs = convexReady ? { ownerClerkId: user!.id } : "skip";
+  const pastSubmissions = useQuery(
+    convexReady ? (api as any).submissions.listByOwner : ("skip" as any),
+    historyArgs,
+  ) as Array<{ _id: string; clientName: string; invoiceId: string; amount: number; status: string; creditsUsed: number; createdAt: number }> | undefined;
+  const vaultEntries = useQuery(
+    convexReady ? (api as any).vault.listByOwner : ("skip" as any),
+    historyArgs,
+  ) as Array<{ _id: string; kind: string; title: string; createdAt: number }> | undefined;
 
   const [raw, setRaw] = useState("");
-  const [chased, setChased] = useState(false);
+  const [selectedInvoiceId, setSelectedInvoiceId] = useState<string | null>(null);
+  const [chasedIds, setChasedIds] = useState<string[]>([]);
 
   const parsed = useMemo(() => {
     if (!raw) return { valid: [] as Invoice[], errors: [] as string[] };
@@ -85,6 +107,12 @@ function WorkbenchInner() {
   }, [raw]);
 
   const balance: number | null = typeof balanceQuery?.balance === "number" ? balanceQuery.balance : null;
+
+  useEffect(() => {
+    if (convexReady && user && balance === null) {
+      ensureCredits({ clerkId: user.id }).catch(() => {});
+    }
+  }, [convexReady, user, balance, ensureCredits]);
 
   if (!isLoaded) return <div className="mx-auto max-w-6xl px-4 py-12">Loading…</div>;
   if (!user)
@@ -106,7 +134,6 @@ function WorkbenchInner() {
   }
 
   if (balance === null) {
-    ensureCredits({ clerkId: user.id }).catch(() => {});
     return <div className="mx-auto max-w-6xl px-4 py-12">Loading credits…</div>;
   }
 
@@ -125,7 +152,26 @@ function WorkbenchInner() {
     );
   }
 
-  const seq = parsed.valid.length > 0 ? buildChaseSequence(parsed.valid[0]) : [];
+  const selectedInvoice: Invoice | null =
+    parsed.valid.find((v) => v.invoiceId === selectedInvoiceId) ?? parsed.valid[0] ?? null;
+  const seq = selectedInvoice ? buildChaseSequence(selectedInvoice) : [];
+  const isAlreadyChased =
+    parsed.valid.length > 0 &&
+    chasedIds.length > 0 &&
+    parsed.valid.every((v) => chasedIds.includes(v.invoiceId));
+  const sortedHistory = pastSubmissions ? [...pastSubmissions].sort((a, b) => (b.createdAt ?? 0) - (a.createdAt ?? 0)) : undefined;
+  const sortedVault = vaultEntries ? [...vaultEntries].sort((a, b) => (b.createdAt ?? 0) - (a.createdAt ?? 0)) : undefined;
+
+  function handleRawChange(next: string) {
+    setRaw(next);
+    setChasedIds([]);
+  }
+
+  function handleLoadSample() {
+    setRaw(SAMPLE_CSV);
+    setSelectedInvoiceId(null);
+    setChasedIds([]);
+  }
 
   async function handleChase() {
     await ensureCredits({ clerkId: user!.id });
@@ -140,7 +186,7 @@ function WorkbenchInner() {
         creditsUsed: 1,
       });
     }
-    setChased(true);
+    setChasedIds(parsed.valid.map((v) => v.invoiceId));
   }
 
   return (
@@ -165,20 +211,30 @@ function WorkbenchInner() {
           1. Upload CSV of overdue invoices
         </h2>
         <p className="text-sm" style={{ color: "var(--color-muted)" }}>Columns: clientName,invoiceId,amount,currency,dueDate</p>
-        <input
-          type="file"
-          accept=".csv"
-          className="mt-3 text-sm"
-          onChange={(e) => {
-            const f = e.target.files?.[0];
-            if (f) f.text().then(setRaw);
-          }}
-        />
+        <div className="mt-3 flex flex-wrap items-center gap-2">
+          <input
+            type="file"
+            accept=".csv"
+            className="text-sm"
+            onChange={(e) => {
+              const f = e.target.files?.[0];
+              if (f) f.text().then((t) => { setRaw(t); setSelectedInvoiceId(null); setChasedIds([]); });
+            }}
+          />
+          <button
+            type="button"
+            onClick={handleLoadSample}
+            className="hallmark-btn rounded-md border px-4 py-2 text-sm"
+            style={{ borderColor: "var(--color-rule-2)" }}
+          >
+            Load sample (10 invoices)
+          </button>
+        </div>
         <textarea
           className="mt-3 h-28 w-full rounded-md border p-2 font-mono text-xs"
           placeholder="clientName,invoiceId,amount,currency,dueDate&#10;Acme,INV-001,1200,USD,2026-07-01"
           value={raw}
-          onChange={(e) => setRaw(e.target.value)}
+          onChange={(e) => handleRawChange(e.target.value)}
         />
       </div>
 
@@ -193,37 +249,75 @@ function WorkbenchInner() {
           <table className="tnum mt-2 w-full text-sm">
             <thead>
               <tr className="mono-label text-left" style={{ color: "var(--color-muted)" }}>
-                <th>Client</th><th>Invoice</th><th>Amount</th><th>Due</th><th>Days overdue</th>
+                <th>Client</th><th>Invoice</th><th>Amount</th><th>Due</th><th>Days overdue</th><th>State</th>
               </tr>
             </thead>
             <tbody>
-              {parsed.valid.map((r) => (
-                <tr key={r.invoiceId} className="border-t">
-                  <td>{r.clientName}</td><td>{r.invoiceId}</td>
-                  <td>{r.currency} {r.amount.toFixed(2)}</td>
-                  <td>{r.dueDate}</td><td>{r.daysOverdue}</td>
-                </tr>
-              ))}
+              {parsed.valid.map((r) => {
+                const isSelected = selectedInvoice?.invoiceId === r.invoiceId;
+                const isChased = chasedIds.includes(r.invoiceId);
+                return (
+                  <tr
+                    key={r.invoiceId}
+                    onClick={() => setSelectedInvoiceId(r.invoiceId)}
+                    className="cursor-pointer border-t"
+                    style={isSelected ? { background: "var(--color-chip-bg)" } : undefined}
+                  >
+                    <td>{r.clientName}</td><td>{r.invoiceId}</td>
+                    <td>{r.currency} {r.amount.toFixed(2)}</td>
+                    <td>{r.dueDate}</td><td>{r.daysOverdue}</td>
+                    <td style={{ color: "var(--color-muted)" }}>{isChased ? "chased" : "—"}</td>
+                  </tr>
+                );
+              })}
             </tbody>
           </table>
         )}
         {parsed.errors.length > 0 && (
-          <ul className="mt-2 text-sm text-red-600">{parsed.errors.map((e) => <li key={e}>{e}</li>)}</ul>
+          <ul className="mt-2 text-sm" style={{ color: "var(--color-warning)" }}>{parsed.errors.map((e) => <li key={e}>{e}</li>)}</ul>
         )}
         <button
           onClick={handleChase}
-          disabled={parsed.valid.length === 0 || balance < parsed.valid.length}
+          disabled={parsed.valid.length === 0 || balance < parsed.valid.length || isAlreadyChased}
           className="hallmark-btn hallmark-btn-primary mt-4 px-5 py-2.5 font-semibold disabled:opacity-50"
         >
-          Chase {parsed.valid.length} invoice(s) — {parsed.valid.length} credit(s)
+          {isAlreadyChased
+            ? `Chased ${parsed.valid.length} invoice(s) — already logged`
+            : `Chase ${parsed.valid.length} invoice(s) — ${parsed.valid.length} credit(s)`}
         </button>
-        {chased && <p className="mt-2 text-sm text-green-700">Chased + logged to vault.</p>}
+        {isAlreadyChased && (
+          <p className="mt-2 text-sm" style={{ color: "var(--color-muted)" }}>
+            Chased {chasedIds.length} invoice(s) · used {chasedIds.length} credit(s) · balance now {balance}. Edit the CSV to chase a new batch.
+          </p>
+        )}
+        {!isAlreadyChased && chasedIds.length === 0 && parsed.valid.length > 0 && (
+          <p className="tnum mt-2 text-sm" style={{ color: "var(--color-muted)" }}>
+            Projected balance after chase: {balance - parsed.valid.length}
+          </p>
+        )}
       </div>
 
       <div className="mt-6 rounded-[10px] border p-4" style={{ borderColor: "var(--color-rule-2)" }}>
         <h2 className="font-semibold" style={{ color: "var(--color-ink)" }}>
-          3. 4-step chase sequence preview (first invoice)
+          3. 4-step chase sequence preview{selectedInvoice ? ` (${selectedInvoice.invoiceId})` : ""}
         </h2>
+        {parsed.valid.length > 0 && (
+          <label className="mt-3 block text-sm" style={{ color: "var(--color-muted)" }}>
+            Invoice{" "}
+            <select
+              className="mt-1 rounded-md border p-2 text-sm"
+              style={{ borderColor: "var(--color-rule-2)", color: "var(--color-ink)" }}
+              value={selectedInvoice?.invoiceId ?? ""}
+              onChange={(e) => setSelectedInvoiceId(e.target.value || null)}
+            >
+              {parsed.valid.map((v) => (
+                <option key={v.invoiceId} value={v.invoiceId}>
+                  {v.invoiceId} — {v.clientName}
+                </option>
+              ))}
+            </select>
+          </label>
+        )}
         {seq.map((s) => (
           <div key={s.key} className="code-card mt-3 p-3 text-sm">
             <div className="font-semibold"><span className="tok-key">[{s.key}]</span> <span className="tok-str">{s.subject}</span></div>
@@ -237,6 +331,33 @@ function WorkbenchInner() {
         <h2 className="font-semibold" style={{ color: "var(--color-ink)" }}>
           4. Vault + export
         </h2>
+        <div className="mt-3">
+          <h3 className="mono-label" style={{ color: "var(--color-muted)" }}>Persisted history</h3>
+          {sortedHistory === undefined && (
+            <p className="mt-2 text-sm" style={{ color: "var(--color-muted)" }}>Loading history…</p>
+          )}
+          {sortedHistory !== undefined && sortedHistory.length === 0 && (
+            <p className="mt-2 text-sm" style={{ color: "var(--color-muted)" }}>No past chases yet — chase a batch to log it here.</p>
+          )}
+          {sortedHistory !== undefined && sortedHistory.length > 0 && (
+            <ul className="tnum mt-2 text-sm" style={{ color: "var(--color-muted)" }}>
+              {sortedHistory.map((h) => (
+                <li key={h._id}>
+                  {h.clientName} · {h.invoiceId} · status: {h.status} · credits used: {h.creditsUsed}
+                </li>
+              ))}
+            </ul>
+          )}
+          {sortedVault !== undefined && sortedVault.length > 0 && (
+            <ul className="tnum mt-2 text-sm" style={{ color: "var(--color-muted)" }}>
+              {sortedVault.map((v) => (
+                <li key={v._id}>
+                  vault · {v.kind} · {v.title}
+                </li>
+              ))}
+            </ul>
+          )}
+        </div>
         <div className="mt-3 flex gap-2">
           <button onClick={() => download("overdue-chase.csv", toCsv(parsed.valid), "text/csv")} className="hallmark-btn rounded-md border px-4 py-2 text-sm" style={{ borderColor: "var(--color-rule-2)" }}>
             Export CSV
