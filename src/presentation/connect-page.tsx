@@ -90,6 +90,12 @@ function ConnectInner() {
     sms: "",
     voice: "",
   });
+  const [authBusy, setAuthBusy] = useState<"whatsapp" | "sms" | "voice" | null>(null);
+  const [authMsg, setAuthMsg] = useState<{ whatsapp: string; sms: string; voice: string }>({
+    whatsapp: "",
+    sms: "",
+    voice: "",
+  });
 
   useEffect(() => {
     if (!touchedUser) {
@@ -255,6 +261,34 @@ function ConnectInner() {
     return accounts;
   }
 
+  async function handleAuthorize(channel: "whatsapp" | "sms" | "voice") {
+    setAuthMsg((m) => ({ ...m, [channel]: "" }));
+    setAuthBusy(channel);
+    try {
+      const res = await fetch("/api/connect/auth-url", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          toolkit: channel,
+          composioUser: composioUser.trim() || "default",
+        }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(data?.error ?? `authorize failed (${res.status})`);
+      const url =
+        (typeof data?.redirect_url === "string" && data.redirect_url.trim()) ||
+        (typeof data?.redirectUrl === "string" && data.redirectUrl.trim()) ||
+        "";
+      if (!url) throw new Error("authorize failed (missing redirect_url)");
+      window.open(url, "_blank", "noopener,noreferrer");
+      setAuthMsg((m) => ({ ...m, [channel]: "complete the provider sign-in, return here, press Verify" }));
+    } catch (e: any) {
+      setAuthMsg((m) => ({ ...m, [channel]: e?.message ?? "authorize failed" }));
+    } finally {
+      setAuthBusy(null);
+    }
+  }
+
   return (
     <div className="mx-auto max-w-6xl px-4 py-10" style={{ background: "var(--color-paper)" }}>
       <p className="mono-label" style={{ color: "var(--color-muted)" }}>Connect · multichannel</p>
@@ -401,6 +435,38 @@ function ConnectInner() {
             Keys stay server-only and are never echoed back. Email sends via Resend (no Gmail needed); WhatsApp / SMS / voice dispatch through your own Composio accounts after approval.
           </p>
         </div>
+      </div>
+
+      <div className="mt-4 rounded-[10px] border p-4" style={{ borderColor: "var(--color-rule-2)" }}>
+        <h2 className="font-semibold" style={{ color: "var(--color-ink)" }}>One-click authorize</h2>
+        <p className="mt-1 text-sm" style={{ color: "var(--color-muted)" }}>
+          Authorize each channel in your Composio project, then Verify above.
+        </p>
+        <div className="mt-3 grid gap-3 md:grid-cols-3">
+          {(["whatsapp", "sms", "voice"] as const).map((ch) => (
+            <div key={ch} className="rounded-md border p-3" style={{ borderColor: "var(--color-rule-2)" }}>
+              <p className="mono-label" style={{ color: "var(--color-muted)" }}>
+                {ch === "whatsapp" ? "WhatsApp" : ch === "sms" ? "SMS" : "Voice"}
+              </p>
+              <button
+                type="button"
+                onClick={() => handleAuthorize(ch)}
+                disabled={authBusy !== null || busy !== null}
+                className="hallmark-btn hallmark-btn-primary mt-2 px-4 py-2 text-sm font-semibold disabled:opacity-50"
+              >
+                {authBusy === ch ? "Opening…" : `Authorize ${ch === "whatsapp" ? "WhatsApp" : ch === "sms" ? "SMS" : "Voice"}`}
+              </button>
+              {authMsg[ch] && (
+                <p className="tnum mt-2 text-sm" style={{ color: "var(--color-muted)" }}>
+                  {authMsg[ch]}
+                </p>
+              )}
+            </div>
+          ))}
+        </div>
+        <p className="mt-3 text-xs" style={{ color: "var(--color-muted)" }}>
+          complete the provider sign-in, return here, press Verify
+        </p>
       </div>
 
       <div className="mt-4 rounded-[10px] border p-4" style={{ borderColor: "var(--color-rule-2)" }}>

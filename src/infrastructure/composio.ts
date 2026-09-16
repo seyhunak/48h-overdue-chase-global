@@ -611,6 +611,193 @@ async function resolveActionSlug(
   }
 }
 
+// ---------- One-click authorization: auth configs + connect links ----------
+
+export type AuthConfig = { id: string; isComposioManaged: boolean; toolkit: string };
+
+function authConfigIdOf(rec: unknown): string {
+  try {
+    const r = rec as { id?: unknown; auth_config_id?: unknown; authConfigId?: unknown } | null | undefined;
+    const candidates = [r?.id, r?.auth_config_id, r?.authConfigId];
+    for (const c of candidates) {
+      if (typeof c === "string" && c.trim()) return c.trim();
+      if (typeof c === "number" && Number.isFinite(c)) return String(c);
+    }
+    return "";
+  } catch {
+    return "";
+  }
+}
+
+function authConfigManagedOf(rec: unknown): boolean {
+  try {
+    const r = rec as { is_composio_managed?: unknown; isComposioManaged?: unknown } | null | undefined;
+    const candidates = [r?.is_composio_managed, r?.isComposioManaged];
+    for (const c of candidates) {
+      if (c === true) return true;
+      if (c === false) return false;
+      if (typeof c === "string" && c.trim().toLowerCase() === "true") return true;
+      if (typeof c === "number" && c === 1) return true;
+    }
+    return false;
+  } catch {
+    return false;
+  }
+}
+
+function authConfigToolkitOf(rec: unknown): string {
+  try {
+    const r = rec as {
+      toolkit?: unknown;
+      toolkit_slug?: unknown;
+      toolkitSlug?: unknown;
+      slug?: unknown;
+    } | null | undefined;
+    if (!r || typeof r !== "object") return "";
+    const tk = r.toolkit;
+    if (typeof tk === "string" && tk.trim()) return tk.trim();
+    if (tk && typeof tk === "object") {
+      try {
+        const slug = (tk as { slug?: unknown })?.slug;
+        if (typeof slug === "string" && slug.trim()) return slug.trim();
+      } catch {
+        // ignore
+      }
+    }
+    const candidates = [r.toolkit_slug, r.toolkitSlug, r.slug];
+    for (const c of candidates) {
+      if (typeof c === "string" && c.trim()) return c.trim();
+    }
+    return "";
+  } catch {
+    return "";
+  }
+}
+
+export async function listAuthConfigs(apiKey: string, toolkitSlug: string): Promise<AuthConfig[]> {
+  try {
+    const key = typeof apiKey === "string" ? apiKey.trim() : "";
+    if (!key) throw new MissingComposioConfigError();
+    const slug = typeof toolkitSlug === "string" ? toolkitSlug.trim() : "";
+    if (!slug) return [];
+    let lastError: (Error & { status?: number }) | null = null;
+    const paramKeys = ["toolkit_slug", "toolkit_slugs"];
+    for (const base of COMPOSIO_BASES) {
+      for (const param of paramKeys) {
+        let res: Response;
+        try {
+          res = await fetch(`${base}/auth_configs?${param}=${encodeURIComponent(slug)}`, {
+            method: "GET",
+            headers: { "x-api-key": key },
+            cache: "no-store",
+          });
+        } catch {
+          lastError = Object.assign(new Error("composio unreachable"), { status: 502 });
+          break;
+        }
+        if (res.status === 404) continue;
+        let json: Record<string, unknown> = {};
+        try {
+          json = await safeJson(res);
+        } catch {
+          json = {};
+        }
+        if (!res.ok) {
+          const msg = providerMessage(json, `composio auth configs failed (status ${res.status})`);
+          const full = msg.includes(String(res.status))
+            ? msg
+            : `composio auth configs failed (status ${res.status}): ${msg}`;
+          lastError = Object.assign(new Error(full.slice(0, 1000)), { status: res.status });
+          if (res.status === 401 || res.status === 403) throw lastError;
+          continue;
+        }
+        const items = extractItems(json);
+        const out: AuthConfig[] = [];
+        for (const it of items) {
+          try {
+            const id = authConfigIdOf(it);
+            if (!id) continue;
+            out.push({ id, isComposioManaged: authConfigManagedOf(it), toolkit: authConfigToolkitOf(it) });
+          } catch {
+            // skip bad row
+          }
+        }
+        return out;
+      }
+    }
+    if (lastError) throw lastError;
+    return [];
+  } catch (e: unknown) {
+    throw toStatusError(e, "composio auth configs failed");
+  }
+}
+
+export async function createAuthLink(
+  apiKey: string,
+  input: { authConfigId: string; userId: string },
+): Promise<string> {
+  try {
+    const key = typeof apiKey === "string" ? apiKey.trim() : "";
+    if (!key) throw new MissingComposioConfigError();
+    const authConfigId = typeof input?.authConfigId === "string" ? input.authConfigId.trim() : "";
+    const userId = typeof input?.userId === "string" && input.userId.trim() ? input.userId.trim() : "default";
+    if (!authConfigId) throw Object.assign(new Error("auth_config_id required"), { status: 400 });
+    let lastError: (Error & { status?: number }) | null = null;
+    for (let bi = 0; bi < COMPOSIO_BASES.length; bi++) {
+      const base = COMPOSIO_BASES[bi];
+      const isLast = bi === COMPOSIO_BASES.length - 1;
+      let res: Response;
+      try {
+        res = await fetch(`${base}/connected_accounts/link`, {
+          method: "POST",
+          headers: { "x-api-key": key, "Content-Type": "application/json" },
+          body: JSON.stringify({ auth_config_id: authConfigId, user_id: userId }),
+        });
+      } catch {
+        if (!isLast) continue;
+        throw Object.assign(new Error("composio unreachable"), { status: 502 });
+      }
+      if (res.status === 404 && !isLast) continue;
+      let json: Record<string, unknown> = {};
+      try {
+        json = await safeJson(res);
+      } catch {
+        json = {};
+      }
+      if (!res.ok) {
+        const msg = providerMessage(json, `composio auth link failed (status ${res.status})`);
+        const full = msg.includes(String(res.status))
+          ? msg
+          : `composio auth link failed (status ${res.status}): ${msg}`;
+        lastError = Object.assign(new Error(full.slice(0, 1000)), { status: res.status });
+        if (res.status === 401 || res.status === 403) throw lastError;
+        if (!isLast && res.status === 404) continue;
+        throw lastError;
+      }
+      try {
+        const j = json as { redirect_url?: unknown; redirectUrl?: unknown; data?: unknown } | null | undefined;
+        const candidates: unknown[] = [j?.redirect_url, j?.redirectUrl];
+        try {
+          const data = j?.data as { redirect_url?: unknown; redirectUrl?: unknown } | null | undefined;
+          if (data && typeof data === "object") candidates.push(data.redirect_url, data.redirectUrl);
+        } catch {
+          // ignore
+        }
+        for (const c of candidates) {
+          if (typeof c === "string" && c.trim()) return c.trim();
+        }
+      } catch {
+        // fall through to error below
+      }
+      throw Object.assign(new Error("composio auth link missing redirect_url"), { status: 502 });
+    }
+    if (lastError) throw lastError;
+    throw Object.assign(new Error("composio unreachable"), { status: 502 });
+  } catch (e: unknown) {
+    throw toStatusError(e, "composio auth link failed");
+  }
+}
+
 export type DispatchInput = {
   subject: string;
   body: string;
