@@ -40,7 +40,10 @@ export function resolveEntityId(settingsUser?: string | null, override?: string 
   return s || "default";
 }
 
-const COMPOSIO_BASE = "https://backend.composio.dev";
+const COMPOSIO_BASES = [
+  "https://backend.composio.dev/api/v3.1",
+  "https://backend.composio.dev/api/v3",
+];
 
 // ---------- Internal: total TypeError-proof helpers ----------
 
@@ -151,40 +154,12 @@ function providerMessage(json: Record<string, unknown>, fallback: string): strin
   return fallback;
 }
 
-async function fetchConnectedAccountItems(apiKey: string, entityId: string): Promise<unknown[]> {
-  const key = typeof apiKey === "string" ? apiKey.trim() : "";
-  if (!key) throw new MissingComposioConfigError();
-  const eid = typeof entityId === "string" && entityId.trim() ? entityId.trim() : "default";
-  let res: Response;
-  try {
-    res = await fetch(
-      `${COMPOSIO_BASE}/api/v3/connected_accounts/list?entity_id=${encodeURIComponent(eid)}&show_active_only=false`,
-      { method: "GET", headers: { "x-api-key": key }, cache: "no-store" },
-    );
-  } catch {
-    throw Object.assign(new Error("composio unreachable"), { status: 502 });
-  }
-  if (!res.ok) {
-    let msg: string;
-    try {
-      const json = await safeJson(res);
-      msg = providerMessage(json, `composio verify failed (status ${res.status})`);
-    } catch {
-      msg = `composio verify failed (status ${res.status})`;
-    }
-    const full = msg.includes(String(res.status)) ? msg : `composio verify failed (status ${res.status}): ${msg}`;
-    throw Object.assign(new Error(full.slice(0, 1000)), { status: res.status });
-  }
-  let json: Record<string, unknown>;
-  try {
-    json = await safeJson(res);
-  } catch {
-    return [];
-  }
+function extractItems(json: Record<string, unknown>): unknown[] {
   try {
     const maybeItems: unknown =
       (json as { items?: unknown })?.items ??
       (json as { data?: { items?: unknown } })?.data?.items ??
+      (json as { tools?: unknown })?.tools ??
       (json as { connectedAccounts?: unknown })?.connectedAccounts ??
       [];
     if (Array.isArray(maybeItems)) return maybeItems;
@@ -195,14 +170,239 @@ async function fetchConnectedAccountItems(apiKey: string, entityId: string): Pro
   }
 }
 
+function toolkitDisplayNameOf(rec: unknown): string {
+  try {
+    const r = rec as {
+      toolkit?: unknown;
+      toolkitSlug?: unknown;
+      appName?: unknown;
+      appUniqueId?: unknown;
+      app_unique_id?: unknown;
+      alias?: unknown;
+    } | null | undefined;
+    if (!r || typeof r !== "object") return "";
+    const tk = r.toolkit;
+    if (typeof tk === "string" && tk.trim()) return tk.trim();
+    if (tk && typeof tk === "object") {
+      try {
+        const slug = (tk as { slug?: unknown })?.slug;
+        if (typeof slug === "string" && slug.trim()) return slug.trim();
+      } catch {
+        // ignore
+      }
+    }
+    const candidates = [r.toolkitSlug, r.appName, r.appUniqueId, r.app_unique_id, r.alias];
+    for (const c of candidates) {
+      if (typeof c === "string" && c.trim()) return c.trim();
+    }
+    return "";
+  } catch {
+    return "";
+  }
+}
+
+function accountIdOf(rec: unknown): string {
+  try {
+    const r = rec as {
+      id?: unknown;
+      connected_account_id?: unknown;
+      connectedAccountId?: unknown;
+    } | null | undefined;
+    const candidates = [r?.id, r?.connected_account_id, r?.connectedAccountId];
+    for (const c of candidates) {
+      if (typeof c === "string" && c.trim()) return c.trim();
+      if (typeof c === "number" && Number.isFinite(c)) return String(c);
+    }
+    return "";
+  } catch {
+    return "";
+  }
+}
+
+function accountUserIdOf(rec: unknown): string {
+  try {
+    const r = rec as {
+      user_id?: unknown;
+      userId?: unknown;
+      entity_id?: unknown;
+      entityId?: unknown;
+    } | null | undefined;
+    const candidates = [r?.user_id, r?.userId, r?.entity_id, r?.entityId];
+    for (const c of candidates) {
+      if (typeof c === "string" && c.trim()) return c.trim();
+    }
+    return "";
+  } catch {
+    return "";
+  }
+}
+
+async function fetchConnectedAccountItems(apiKey: string, entityId: string): Promise<unknown[]> {
+  const key = typeof apiKey === "string" ? apiKey.trim() : "";
+  if (!key) throw new MissingComposioConfigError();
+  const eid = typeof entityId === "string" && entityId.trim() ? entityId.trim() : "default";
+  let lastError: (Error & { status?: number }) | null = null;
+
+  async function getJson(url: string): Promise<{ res: Response; json: Record<string, unknown> }> {
+    let res: Response;
+    try {
+      res = await fetch(url, {
+        method: "GET",
+        headers: { "x-api-key": key },
+        cache: "no-store",
+      });
+    } catch {
+      throw Object.assign(new Error("composio unreachable"), { status: 502 });
+    }
+    let json: Record<string, unknown> = {};
+    try {
+      json = await safeJson(res);
+    } catch {
+      json = {};
+    }
+    return { res, json };
+  }
+
+  function filterByEntity(items: unknown[]): unknown[] {
+    try {
+      const filtered = items.filter((it) => {
+        try {
+          const uid = accountUserIdOf(it);
+          if (!uid) return true;
+          return uid === eid;
+        } catch {
+          return true;
+        }
+      });
+      const hasUid = items.some((it) => {
+        try {
+          return Boolean(accountUserIdOf(it));
+        } catch {
+          return false;
+        }
+      });
+      if (!hasUid) return items;
+      return filtered;
+    } catch {
+      return items;
+    }
+  }
+
+  for (const base of COMPOSIO_BASES) {
+    // 1) Filtered list: GET {base}/connected_accounts?user_ids=<entityId>
+    let filtered: { res: Response; json: Record<string, unknown> };
+    try {
+      filtered = await getJson(`${base}/connected_accounts?user_ids=${encodeURIComponent(eid)}`);
+    } catch (e: unknown) {
+      lastError = toStatusError(e, "composio unreachable", 502);
+      continue;
+    }
+    if (filtered.res.ok) {
+      const items = extractItems(filtered.json);
+      if (items.length > 0) return items;
+      // Filtered call emptied — retry unfiltered on the same base,
+      // then filter client-side by item.user_id.
+      try {
+        const unfiltered = await getJson(`${base}/connected_accounts`);
+        if (unfiltered.res.status === 404) {
+          lastError = Object.assign(
+            new Error(`composio verify failed (status 404): ${providerMessage(unfiltered.json, "not found")}`.slice(0, 1000)),
+            { status: 404 },
+          );
+          continue;
+        }
+        if (!unfiltered.res.ok) {
+          const msg = providerMessage(unfiltered.json, `composio verify failed (status ${unfiltered.res.status})`);
+          const full = msg.includes(String(unfiltered.res.status))
+            ? msg
+            : `composio verify failed (status ${unfiltered.res.status}): ${msg}`;
+          lastError = Object.assign(new Error(full.slice(0, 1000)), { status: unfiltered.res.status });
+          if (unfiltered.res.status === 401 || unfiltered.res.status === 403) throw lastError;
+          continue;
+        }
+        const all = extractItems(unfiltered.json);
+        const kept = filterByEntity(all);
+        if (kept.length > 0) return kept;
+        if (all.length > 0) return all;
+        lastError = null;
+        continue;
+      } catch (e: unknown) {
+        if (e instanceof MissingComposioConfigError) throw e;
+        const st = statusOf(e);
+        if (st === 401 || st === 403) throw toStatusError(e, messageOf(e, "composio verify failed"), st);
+        if (e instanceof Error && (e as { status?: unknown }).status !== undefined) {
+          lastError = e as Error & { status?: number };
+        }
+        continue;
+      }
+    }
+    if (filtered.res.status === 404 || filtered.res.status === 400 || filtered.res.status === 422) {
+      // Filter param unsupported on this version — retry unfiltered on the
+      // same base and filter client-side by item.user_id.
+      try {
+        const unfiltered = await getJson(`${base}/connected_accounts`);
+        if (unfiltered.res.status === 404) {
+          lastError = Object.assign(
+            new Error(`composio verify failed (status 404): ${providerMessage(unfiltered.json, "not found")}`.slice(0, 1000)),
+            { status: 404 },
+          );
+          continue;
+        }
+        if (!unfiltered.res.ok) {
+          const msg = providerMessage(unfiltered.json, `composio verify failed (status ${unfiltered.res.status})`);
+          const full = msg.includes(String(unfiltered.res.status))
+            ? msg
+            : `composio verify failed (status ${unfiltered.res.status}): ${msg}`;
+          lastError = Object.assign(new Error(full.slice(0, 1000)), { status: unfiltered.res.status });
+          if (unfiltered.res.status === 401 || unfiltered.res.status === 403) throw lastError;
+          continue;
+        }
+        const all = extractItems(unfiltered.json);
+        const kept = filterByEntity(all);
+        if (kept.length > 0) return kept;
+        if (all.length > 0) return all;
+        lastError = null;
+        continue;
+      } catch (e: unknown) {
+        if (e instanceof MissingComposioConfigError) throw e;
+        const st = statusOf(e);
+        if (st === 401 || st === 403) throw toStatusError(e, messageOf(e, "composio verify failed"), st);
+        if (e instanceof Error && (e as { status?: unknown }).status !== undefined) {
+          lastError = e as Error & { status?: number };
+        }
+        continue;
+      }
+    }
+    // Non-404 failure: surface auth errors immediately; otherwise fall
+    // through to the next base version before giving up.
+    try {
+      const msg = providerMessage(filtered.json, `composio verify failed (status ${filtered.res.status})`);
+      const full = msg.includes(String(filtered.res.status))
+        ? msg
+        : `composio verify failed (status ${filtered.res.status}): ${msg}`;
+      lastError = Object.assign(new Error(full.slice(0, 1000)), { status: filtered.res.status });
+      if (filtered.res.status === 401 || filtered.res.status === 403) throw lastError;
+      continue;
+    } catch (e: unknown) {
+      if (e instanceof MissingComposioConfigError) throw e;
+      const st = statusOf(e);
+      if (st === 401 || st === 403) throw toStatusError(e, messageOf(e, "composio verify failed"), st);
+      if (e instanceof Error && (e as { status?: unknown }).status !== undefined) {
+        lastError = e as Error & { status?: number };
+      }
+      continue;
+    }
+  }
+  if (lastError) throw lastError;
+  return [];
+}
+
 function appNamesOf(items: unknown[]): string[] {
   try {
     const names: string[] = [];
     for (const c of items) {
       try {
-        const rec = c as { appName?: unknown; appUniqueId?: unknown } | null | undefined;
-        const raw = rec?.appName ?? rec?.appUniqueId ?? "";
-        const n = String(raw ?? "").trim();
+        const n = toolkitDisplayNameOf(c);
         if (n) names.push(n);
       } catch {
         // skip one bad row, never throw
@@ -247,12 +447,12 @@ async function findConnectedAccountForChannel(
     const items = await fetchConnectedAccountItems(apiKey, entityId);
     for (const c of items) {
       try {
-        const rec = c as { appName?: unknown; appUniqueId?: unknown; status?: unknown; id?: unknown; connectedAccountId?: unknown } | null | undefined;
-        const appName = String(rec?.appName ?? rec?.appUniqueId ?? "").trim();
+        const rec = c as { status?: unknown } | null | undefined;
+        const appName = toolkitDisplayNameOf(c);
         if (!appName || !matcher.test(appName)) continue;
         const status = String(rec?.status ?? "ACTIVE").toUpperCase();
         if (status && status !== "ACTIVE" && status !== "ENABLED") continue;
-        const id = String(rec?.id ?? rec?.connectedAccountId ?? "").trim();
+        const id = accountIdOf(c);
         if (id) return { id, appName };
       } catch {
         // skip bad row
@@ -282,63 +482,72 @@ async function resolveActionSlug(
     if (!key) return fallback;
     const app = typeof appName === "string" ? appName.trim().toLowerCase() : "";
     if (!app) return fallback;
-    let res: Response;
-    try {
-      res = await fetch(`${COMPOSIO_BASE}/api/v3/actions/list?app_names=${encodeURIComponent(app)}`, {
-        method: "GET",
-        headers: { "x-api-key": key },
-        cache: "no-store",
-      });
-    } catch {
-      return fallback;
-    }
-    if (!res.ok) return fallback;
-    let json: Record<string, unknown>;
-    try {
-      json = await safeJson(res);
-    } catch {
-      return fallback;
-    }
-    let items: unknown[] = [];
-    try {
-      const maybe = (json as { items?: unknown })?.items ?? (json as { data?: { items?: unknown } })?.data?.items ?? [];
-      if (Array.isArray(maybe)) items = maybe;
-    } catch {
-      return fallback;
-    }
-    let names: string[] = [];
-    try {
-      names = items
-        .map((a) => {
-          try {
-            return String((a as { name?: unknown; slug?: unknown })?.name ?? (a as { slug?: unknown })?.slug ?? "");
-          } catch {
-            return "";
-          }
-        })
-        .filter((n) => Boolean(n));
-    } catch {
-      return fallback;
-    }
     const want =
       channel === "whatsapp"
         ? [/whatsapp.*send.*message/i, /send.*message/i]
         : channel === "sms"
           ? [/send.*sms/i, /send.*message/i, /send.*text/i]
           : [/make.*call/i, /create.*call/i, /initiate.*call/i, /outbound.*call/i];
-    for (const re of want) {
-      try {
-        const hit = names.find((n) => re.test(n));
-        if (hit) return hit;
-      } catch {
-        // try next pattern
-      }
-    }
-    if (names.length > 0 && channel === "whatsapp") {
-      try {
-        return names[0];
-      } catch {
-        return fallback;
+    // Composio REST v3.1 current, v3 supported: GET {base}/tools with a
+    // toolkit filter. Param naming varies — try `toolkit` first, then
+    // `toolkits`. Try base versions in order (v3.1 first, v3 fallback).
+    const paramKeys = ["toolkit", "toolkits"];
+    for (const base of COMPOSIO_BASES) {
+      for (const param of paramKeys) {
+        let res: Response;
+        try {
+          res = await fetch(`${base}/tools?${param}=${encodeURIComponent(app)}`, {
+            method: "GET",
+            headers: { "x-api-key": key },
+            cache: "no-store",
+          });
+        } catch {
+          break;
+        }
+        if (res.status === 404) continue;
+        if (!res.ok) continue;
+        let json: Record<string, unknown>;
+        try {
+          json = await safeJson(res);
+        } catch {
+          continue;
+        }
+        const items = extractItems(json);
+        let names: string[] = [];
+        try {
+          names = items
+            .map((a) => {
+              try {
+                const rec = a as { name?: unknown; slug?: unknown } | null | undefined;
+                const v = rec?.slug ?? rec?.name ?? "";
+                return String(v ?? "").trim();
+              } catch {
+                return "";
+              }
+            })
+            .filter((n) => Boolean(n));
+        } catch {
+          continue;
+        }
+        if (names.length === 0) continue;
+        for (const re of want) {
+          try {
+            const hit = names.find((n) => re.test(n));
+            if (hit) return hit;
+          } catch {
+            // try next pattern
+          }
+        }
+        if (channel === "whatsapp") {
+          try {
+            return names[0];
+          } catch {
+            // fall through to fallback
+          }
+        }
+        // Resolved a non-empty tool list but no channel-specific slug —
+        // keep looking at the next param/base before using the fallback.
+        if (names.length > 0 && channel !== "whatsapp") continue;
       }
     }
     return fallback;
@@ -409,21 +618,33 @@ export async function dispatchViaComposio(opts: {
       input.script = text;
       input.message_body = text;
     }
-    let res: Response;
-    try {
-      res = await fetch(`${COMPOSIO_BASE}/api/v3/actions/${encodeURIComponent(actionName)}/execute`, {
-        method: "POST",
-        headers: { "x-api-key": key, "Content-Type": "application/json" },
-        body: JSON.stringify({ connected_account_id: account.id, entity_id: entityId, input }),
-      });
-    } catch {
-      throw Object.assign(new Error("composio unreachable"), { status: 502 });
-    }
+    let res: Response | null = null;
     let json: Record<string, unknown> = {};
-    try {
-      json = await safeJson(res);
-    } catch {
-      json = {};
+    for (let bi = 0; bi < COMPOSIO_BASES.length; bi++) {
+      const base = COMPOSIO_BASES[bi];
+      const isLast = bi === COMPOSIO_BASES.length - 1;
+      let attempt: Response;
+      try {
+        attempt = await fetch(`${base}/tools/execute/${encodeURIComponent(actionName)}`, {
+          method: "POST",
+          headers: { "x-api-key": key, "Content-Type": "application/json" },
+          body: JSON.stringify({ connected_account_id: account.id, user_id: entityId, arguments: input }),
+        });
+      } catch {
+        if (!isLast) continue;
+        throw Object.assign(new Error("composio unreachable"), { status: 502 });
+      }
+      if (attempt.status === 404 && !isLast) continue;
+      res = attempt;
+      try {
+        json = await safeJson(res);
+      } catch {
+        json = {};
+      }
+      break;
+    }
+    if (!res) {
+      throw Object.assign(new Error("composio unreachable"), { status: 502 });
     }
     if (!res.ok) {
       const msg = providerMessage(json, `action ${actionName} failed`);
