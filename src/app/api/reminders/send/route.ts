@@ -86,11 +86,33 @@ export async function POST(req: Request) {
         channel,
       });
       return NextResponse.json({ sent: true, channel, resendId: sent.id, reminder: updated });
-    } catch (e: any) {
+    } catch (e: unknown) {
       if (e instanceof MissingEmailConfigError) {
         return NextResponse.json({ error: e.message, channel }, { status: 503 });
       }
-      return fail(e?.message ?? "send failed");
+      let message = "send failed";
+      try {
+        if (e instanceof Error) {
+          const m = typeof e.message === "string" ? e.message.trim() : "";
+          message = (m || message).slice(0, 1000);
+        } else if (typeof e === "string") {
+          message = (e.trim() || message).slice(0, 1000);
+        } else if (e !== null && e !== undefined) {
+          try {
+            const maybeMsg = (e as { message?: unknown })?.message;
+            if (typeof maybeMsg === "string" && maybeMsg.trim()) message = maybeMsg.trim().slice(0, 1000);
+            else {
+              const s = String(e);
+              message = (s && s !== "[object Object]" ? s : message).slice(0, 1000);
+            }
+          } catch {
+            // keep default
+          }
+        }
+      } catch {
+        // keep default
+      }
+      return fail(message);
     }
   }
 
@@ -148,8 +170,36 @@ export async function POST(req: Request) {
       app: dispatched.appName,
       reminder: updated,
     });
-  } catch (e: any) {
-    const status = typeof e?.status === "number" ? e.status : 502;
-    return fail(e?.message ?? "send failed", status);
+  } catch (e: unknown) {
+    let message = "send failed";
+    let status = 502;
+    try {
+      if (e instanceof Error) {
+        const m = typeof e.message === "string" ? e.message.trim() : "";
+        if (m) message = m.slice(0, 1000);
+      } else if (typeof e === "string") {
+        if (e.trim()) message = e.trim().slice(0, 1000);
+      } else if (e !== null && e !== undefined) {
+        try {
+          const maybeMsg = (e as { message?: unknown })?.message;
+          if (typeof maybeMsg === "string" && maybeMsg.trim()) message = maybeMsg.trim().slice(0, 1000);
+          else {
+            const s = String(e);
+            if (s && s !== "[object Object]") message = s.slice(0, 1000);
+          }
+        } catch {
+          // keep defaults
+        }
+      }
+    } catch {
+      // keep defaults
+    }
+    try {
+      const s = (e as { status?: unknown })?.status;
+      if (typeof s === "number" && Number.isFinite(s) && s >= 100 && s < 600) status = s;
+    } catch {
+      // keep 502
+    }
+    return fail(message, status);
   }
 }
