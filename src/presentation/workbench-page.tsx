@@ -8,23 +8,24 @@ import { useSearchParams } from "next/navigation";
 import { api } from "../../convex/_generated/api";
 import { buildChaseSequence, parseCsv, validateInvoiceRow, type Invoice } from "@/domain/invoices";
 import { getConvexUrl, getClerkPublishableKey } from "@/infrastructure/env";
+import { ReminderDispatchSection } from "@/presentation/reminders-section";
 
-const SAMPLE_CSV = `clientName,invoiceId,amount,currency,dueDate
-Acme Corp,INV-001,1200,USD,2026-07-01
-Globex,INV-002,850.5,USD,2026-07-05
-Initech,INV-003,4300,EUR,2026-07-10
-Umbrella Co,INV-004,975,USD,2026-07-12
-Hooli,INV-005,2500,USD,2026-07-15
-Stark Industries,INV-006,11200,USD,2026-07-18
-Wayne Enterprises,INV-007,640,GBP,2026-07-20
-Massive Dynamic,INV-008,1890,USD,2026-07-22
-Cyberdyne,INV-009,3300,USD,2026-07-25
-Tyrell Corp,INV-010,720,EUR,2026-07-28`;
+const SAMPLE_CSV = `clientName,invoiceId,amount,currency,dueDate,email
+Acme Corp,INV-001,1200,USD,2026-07-01,ap@acme-corp.example
+Globex,INV-002,850.5,USD,2026-07-05,finance@globex.example
+Initech,INV-003,4300,EUR,2026-07-10,accounts@initech.example
+Umbrella Co,INV-004,975,USD,2026-07-12,billing@umbrella-co.example
+Hooli,INV-005,2500,USD,2026-07-15,ap@hooli.example
+Stark Industries,INV-006,11200,USD,2026-07-18,finance@stark-industries.example
+Wayne Enterprises,INV-007,640,GBP,2026-07-20,accounts@wayne-enterprises.example
+Massive Dynamic,INV-008,1890,USD,2026-07-22,ap@massive-dynamic.example
+Cyberdyne,INV-009,3300,USD,2026-07-25,billing@cyberdyne.example
+Tyrell Corp,INV-010,720,EUR,2026-07-28,finance@tyrell-corp.example`;
 
 function toCsv(rows: Invoice[]): string {
-  const header = "clientName,invoiceId,amount,currency,dueDate,daysOverdue,status";
+  const header = "clientName,invoiceId,amount,currency,dueDate,email,daysOverdue,status";
   const lines = rows.map((r) =>
-    [r.clientName, r.invoiceId, String(r.amount), r.currency, r.dueDate, String(r.daysOverdue), r.status].join(","),
+    [r.clientName, r.invoiceId, String(r.amount), r.currency, r.dueDate, r.email, String(r.daysOverdue), r.status].join(","),
   );
   return [header, ...lines].join("\n");
 }
@@ -210,7 +211,7 @@ function WorkbenchInner() {
         <h2 className="font-semibold" style={{ color: "var(--color-ink)" }}>
           1. Upload CSV of overdue invoices
         </h2>
-        <p className="text-sm" style={{ color: "var(--color-muted)" }}>Columns: clientName,invoiceId,amount,currency,dueDate</p>
+        <p className="text-sm" style={{ color: "var(--color-muted)" }}>Columns: clientName,invoiceId,amount,currency,dueDate,email (optional)</p>
         <div className="mt-3 flex flex-wrap items-center gap-2">
           <input
             type="file"
@@ -232,7 +233,7 @@ function WorkbenchInner() {
         </div>
         <textarea
           className="mt-3 h-28 w-full rounded-md border p-2 font-mono text-xs"
-          placeholder="clientName,invoiceId,amount,currency,dueDate&#10;Acme,INV-001,1200,USD,2026-07-01"
+          placeholder="clientName,invoiceId,amount,currency,dueDate,email&#10;Acme,INV-001,1200,USD,2026-07-01,ap@acme-corp.example"
           value={raw}
           onChange={(e) => handleRawChange(e.target.value)}
         />
@@ -249,7 +250,7 @@ function WorkbenchInner() {
           <table className="tnum mt-2 w-full text-sm">
             <thead>
               <tr className="mono-label text-left" style={{ color: "var(--color-muted)" }}>
-                <th>Client</th><th>Invoice</th><th>Amount</th><th>Due</th><th>Days overdue</th><th>State</th>
+                <th>Client</th><th>Invoice</th><th>Amount</th><th>Due</th><th>Email</th><th>Days overdue</th><th>State</th>
               </tr>
             </thead>
             <tbody>
@@ -265,7 +266,7 @@ function WorkbenchInner() {
                   >
                     <td>{r.clientName}</td><td>{r.invoiceId}</td>
                     <td>{r.currency} {r.amount.toFixed(2)}</td>
-                    <td>{r.dueDate}</td><td>{r.daysOverdue}</td>
+                    <td>{r.dueDate}</td><td>{r.email || "—"}</td><td>{r.daysOverdue}</td>
                     <td style={{ color: "var(--color-muted)" }}>{isChased ? "chased" : "—"}</td>
                   </tr>
                 );
@@ -370,6 +371,8 @@ function WorkbenchInner() {
           {parsed.valid.map((r) => <li key={r.invoiceId}>vault · {r.clientName} · {r.invoiceId}</li>)}
         </ul>
       </div>
+
+      <ReminderDispatchSection userId={user.id} />
     </div>
   );
 }

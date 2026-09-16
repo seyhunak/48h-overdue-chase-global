@@ -248,7 +248,7 @@ export default function LandingPage() {
           </div>
           <div className="tally-features__grid">
             <article className="tally-feature">
-              <div className="tally-feature__art">clientName, invoiceId, amount, currency, dueDate → validated in seconds</div>
+              <div className="tally-feature__art">clientName, invoiceId, amount, currency, dueDate, email → validated in seconds</div>
               <h3 className="tally-feature__title">Validate in seconds</h3>
               <p className="tally-feature__desc">
                 CSV upload becomes a clean validation table — amounts, currencies, due dates, days overdue.
