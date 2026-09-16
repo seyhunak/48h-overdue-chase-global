@@ -6,4 +6,6 @@ export const metadata: Metadata = {
   alternates: { canonical: "/app" },
 };
 
+export const dynamic = "force-dynamic";
+
 export { default } from "@/presentation/workbench-page";
