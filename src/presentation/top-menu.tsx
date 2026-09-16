@@ -73,6 +73,9 @@ export function TopMenu() {
           <Link href="/app" className="tally-nav__link">
             App
           </Link>
+          <Link href="/data" className="tally-nav__link">
+            Data
+          </Link>
           <Link href="/admin" className="tally-nav__link">
             Admin
           </Link>
