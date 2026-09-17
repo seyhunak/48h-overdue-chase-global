@@ -58,8 +58,8 @@ ClearDue is a **48-hour fix-pack** Web SaaS that turns manual follow-up into an 
 
 ```bash
 # Clone
-git clone https://github.com/seyhunak/48h-overdue-chase-global.git
-cd 48h-overdue-chase-global
+git clone https://github.com/seyhunak/ClearDue.git
+cd ClearDue
 
 # Install
 npm install
