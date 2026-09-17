@@ -192,6 +192,16 @@ function WorkbenchInner() {
       if (!res.ok) throw new Error(data?.error ?? `Zoho import failed (${res.status})`);
       const invoices: Invoice[] = Array.isArray(data?.invoices) ? data.invoices : [];
       const skipped: { invoiceId: string; reason: string }[] = Array.isArray(data?.skipped) ? data.skipped : [];
+      const draftCount = skipped.filter((s) => /\(status draft\)/i.test(s?.reason ?? "")).length;
+      if (invoices.length === 0 && draftCount > 0 && skipped.length === draftCount) {
+        // All rows are drafts: the pull worked, but drafts are never
+        // chaseable. Say exactly that + the one-click fix (Zoho → invoice →
+        // Mark as Sent), instead of a misleading org/validation hint.
+        setZohoMsg(
+          `Zoho pull worked — but all ${draftCount} invoice(s) are still DRAFT in Zoho, and drafts are never chaseable. In Zoho Invoice open each invoice and Mark as Sent, then import again.`,
+        );
+        return;
+      }
       if (invoices.length === 0) {
         if (skipped.length === 0) {
           setZohoMsg("Zoho returned no invoices — check your Zoho org in /connect (org ID is required for multi-org Zoho accounts).");

@@ -841,8 +841,14 @@ export async function createZohoConnectLink(
 
 type ComposioTool = { name: string; description?: string };
 
-// GET /tools?toolkit_slug=<slug> — runtime discovery so a toolkit rename
-// cannot break imports; known-name candidates are the fallback.
+// GET /tools — runtime discovery so a toolkit rename cannot break imports.
+// Verified against the live API (2026-09-17):
+//  - use `toolkit_slug=` (the `toolkits=` spelling returns unrelated tools);
+//  - pass `limit=100` — the default page is 20 tools and the invoice list
+//    tool (`ZOHO_INVOICE_LIST_INVOICES`) sits past it;
+//  - v3.1 only: the frozen v3 catalog answers invoice execution with
+//    "Invalid URL Passed".
+// Tool identity is the `slug` field (SCREAMING_SNAKE); `name` is a human label.
 export async function listToolkitTools(
   apiKey: string,
   toolkitSlug: string,
@@ -850,14 +856,13 @@ export async function listToolkitTools(
   const key = apiKey.trim();
   if (!key) throw new MissingComposioConfigError();
   const headers = { "x-api-key": key, Accept: "application/json" } as Record<string, string>;
-  // v3.1 accepts `toolkits=` (comma-separated); older surface used
-  // `toolkit_slug=`. Try both so discovery works across API revisions.
-  const queryVariants = [
-    `toolkits=${encodeURIComponent(toolkitSlug)}`,
+  const queries = [
+    `toolkit_slug=${encodeURIComponent(toolkitSlug)}&limit=100`,
     `toolkit_slug=${encodeURIComponent(toolkitSlug)}`,
   ];
+  // v3.1 first (latest toolkit versions); v3 as a last resort.
   for (const base of COMPOSIO_BASES) {
-    for (const query of queryVariants) {
+    for (const query of queries) {
       let res: Response;
       try {
         res = await fetch(`${base}/tools?${query}`, {
@@ -878,7 +883,7 @@ export async function listToolkitTools(
       if (!res.ok) continue;
       const out: ComposioTool[] = [];
       for (const it of extractItems(json)) {
-        const name = strField(it, ["name", "tool_name", "slug", "action_name"]);
+        const name = strField(it, ["slug", "name", "tool_name", "action_name"]);
         if (name) out.push({ name, description: strField(it, ["description", "title"]) || undefined });
       }
       if (out.length > 0) return out;
@@ -887,10 +892,19 @@ export async function listToolkitTools(
   return [];
 }
 
+// The exact list-invoices tool, verified live: ZOHO_INVOICE_LIST_INVOICES
+// (requires organization_id). Preferred outright; discovery ranking is the
+// fallback for toolkit renames.
+export const ZOHO_LIST_INVOICES_TOOL = "ZOHO_INVOICE_LIST_INVOICES";
+
 async function resolveZohoFetchTool(apiKey: string): Promise<string | null> {
   const tools = await listToolkitTools(apiKey, ZOHO_TOOLKIT_SLUG);
-  // Rank invoice-listing tools; broad verb match so "GET_INVOICES" style slugs
-  // are not missed (a narrow FETCH|LIST|GET_ALL regex misses real tools).
+  // The verified list tool wins outright when present.
+  if (tools.some((t) => t.name.toUpperCase() === ZOHO_LIST_INVOICES_TOOL)) {
+    return ZOHO_LIST_INVOICES_TOOL;
+  }
+  // Otherwise rank invoice-listing tools; broad verb match so renames are not
+  // missed. Exact LIST_INVOICES-style slugs outrank single-invoice getters.
   const ranked = tools
     .filter((t) => {
       const n = t.name.toUpperCase();
@@ -971,8 +985,13 @@ async function proxyZohoInvoices(
   throw Object.assign(new Error(lastMsg.slice(0, 1000)), { status: 502 });
 }
 
-// Executes a Zoho tool through Composio. Tries the given argument shapes in
-// order because Zoho tools differ on whether organization_id is required.
+// Executes a Zoho tool through Composio. Verified live (2026-09-17):
+//  - execute on the v3.1 base only (frozen v3 answers invoice calls with
+//    "Invalid URL Passed");
+//  - ZOHO_INVOICE_LIST_INVOICES requires organization_id plus paging args
+//    ({ organization_id, per_page, page }) — an empty-arguments call is what
+//    surfaced as "Validation error while processing request" in the UI.
+// Other tools keep the tolerant variant ladder (with/without organization_id).
 async function executeZohoTool(
   apiKey: string,
   accountId: string,
@@ -980,18 +999,42 @@ async function executeZohoTool(
   toolName: string,
   args: Record<string, unknown>,
 ): Promise<Record<string, unknown>> {
-  const variants: Record<string, unknown>[] = [args];
-  if ("organization_id" in args) {
+  const variants: Record<string, unknown>[] = [{ per_page: 100, page: 1, ...args }];
+  if (!("organization_id" in variants[0])) {
+    // organization_id is required — without it Composio returns a validation
+    // error, so there is no point trying a variant that omits it.
+    throw Object.assign(
+      new Error("Zoho organization_id is required — save your Zoho org ID in /connect first"),
+      { status: 400 },
+    );
+  }
+  if (toolName !== ZOHO_LIST_INVOICES_TOOL && "organization_id" in args) {
     const { organization_id, ...rest } = args;
     variants.push(rest, { organization_id });
   }
   let lastMsg = "composio zoho tool execute failed";
   for (const variant of variants) {
-    const { res, json } = await postComposio(apiKey, `/tools/execute/${encodeURIComponent(toolName)}`, {
-      connected_account_id: accountId,
-      user_id: entityId,
-      arguments: variant,
-    });
+    // Zoho invoice execution is verified on v3.1 only — post straight at it
+    // (postComposio's base ladder would retry a frozen-v3 failure identically).
+    const { res, json } = await (async () => {
+      const headers = { "x-api-key": apiKey.trim(), "Content-Type": "application/json" };
+      const res = await fetch(`${COMPOSIO_BASES[0]}/tools/execute/${encodeURIComponent(toolName)}`, {
+        method: "POST",
+        headers,
+        body: JSON.stringify({
+          connected_account_id: accountId,
+          user_id: entityId,
+          arguments: variant,
+        }),
+      });
+      let parsed: Record<string, unknown> = {};
+      try {
+        parsed = await safeJson(res);
+      } catch {
+        parsed = {};
+      }
+      return { res, json: parsed };
+    })();
     if (res.ok && (json as { successful?: unknown })?.successful !== false) return json;
     lastMsg = providerMessage(json, `${lastMsg} (status ${res.status})`);
     if (res.status === 401 || res.status === 403) throw new OneSignalAuthError(lastMsg);
