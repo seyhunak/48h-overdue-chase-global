@@ -50,7 +50,9 @@ export class MissingComposioConfigError extends Error {
 export class ChannelNotConnectedError extends Error {
   readonly status = 502;
   constructor(channel: Channel | string) {
-    super(`${channel} channel not connected — connect OneSignal in /connect`);
+    const raw = String(channel ?? "").trim().toLowerCase();
+    const label = raw === "sms" ? "SMS" : raw === "push" ? "Push" : raw === "email" ? "Email" : raw || "Channel";
+    super(`${label} channel not connected — connect OneSignal in /connect`);
     this.name = "ChannelNotConnectedError";
   }
 }
@@ -601,6 +603,42 @@ export async function createOneSignalConnectLink(
 }
 
 
+// Deletes one of the owner's OneSignal connected accounts (used to prune
+// broken duplicates down to a single working connection). The account must
+// belong to this entity — callers must verify via listOneSignalConnections.
+export async function deleteOneSignalConnection(apiKey: string, accountId: string): Promise<void> {
+  const key = apiKey.trim();
+  if (!key) throw new MissingComposioConfigError();
+  const id = accountId.trim();
+  if (!id) throw Object.assign(new Error("accountId required"), { status: 400 });
+  let lastError: (Error & { status?: number }) | null = null;
+  for (const base of COMPOSIO_BASES) {
+    let res: Response;
+    try {
+      res = await fetch(`${base}/connected_accounts/${encodeURIComponent(id)}`, {
+        method: "DELETE",
+        headers: { "x-api-key": key },
+        cache: "no-store",
+      });
+    } catch {
+      lastError = Object.assign(new Error("composio unreachable"), { status: 502 });
+      continue;
+    }
+    if (res.status === 404) continue;
+    if (res.ok) return;
+    let json: Record<string, unknown> = {};
+    try {
+      json = await safeJson(res);
+    } catch {
+      json = {};
+    }
+    const msg = providerMessage(json, `composio account delete failed (status ${res.status})`);
+    lastError = Object.assign(new Error(msg.slice(0, 1000)), { status: res.status });
+    if (res.status === 401 || res.status === 403) throw lastError;
+  }
+  throw (lastError ?? Object.assign(new Error("composio account delete failed"), { status: 502 }));
+}
+
 // ---------- Dispatch: OneSignal notification via Composio ----------
 
 function extractOneSignalId(data: unknown): string {
@@ -641,29 +679,57 @@ function buildNotificationArguments(opts: {
   subject: string;
   body: string;
 }): Record<string, unknown> {
-  // Declared tool params stay top-level (app_id / contents / headings); the
-  // channel-specific targeting params ride in `extra_params`, which the
-  // ONESIGNAL_REST_API_CREATE_NOTIFICATION tool forwards verbatim.
-  const extra: Record<string, unknown> = {};
-  if (opts.channel === "email") {
-    extra.include_email_tokens = [opts.to];
-    extra.email_subject = opts.subject;
-    extra.email_body = opts.body;
-  } else if (opts.channel === "sms") {
-    extra.include_phone_numbers = [opts.to];
-    const from = process.env.ONESIGNAL_SMS_FROM?.trim();
-    if (from) extra.sms_from = from;
-  } else {
-    extra.include_external_user_ids = [opts.to];
-  }
-  return {
+  // OneSignal's create-notification API shape: EVERYTHING top-level.
+  // `include_email_tokens` / `email_subject` / `email_body` (and the sms/push
+  // equivalents) must sit beside app_id / contents / headings — nesting them
+  // under an `extra_params` key means OneSignal silently ignores them and
+  // creates an untargeted notification (accepted, 0 recipients, nothing sent).
+  const args: Record<string, unknown> = {
     app_id: opts.appId,
     headings: { en: opts.subject },
     contents: { en: opts.body },
-    extra_params: extra,
   };
+  if (opts.channel === "email") {
+    args.include_email_tokens = [opts.to];
+    args.email_subject = opts.subject;
+    args.email_body = opts.body;
+  } else if (opts.channel === "sms") {
+    args.include_phone_numbers = [opts.to];
+    const from = process.env.ONESIGNAL_SMS_FROM?.trim();
+    if (from) args.sms_from = from;
+  } else {
+    args.include_external_user_ids = [opts.to];
+  }
+  return args;
 }
 
+function extractRecipients(data: unknown): number | null {
+  try {
+    const rec = data as Record<string, unknown> | null | undefined;
+    if (!rec || typeof rec !== "object") return null;
+    const direct = (rec as Record<string, unknown>).recipients;
+    if (typeof direct === "number" && Number.isFinite(direct)) return direct;
+    for (const key of ["data", "result", "response", "notification"]) {
+      const inner = (rec as Record<string, unknown>)[key];
+      if (inner && typeof inner === "object") {
+        const v = (inner as Record<string, unknown>).recipients;
+        if (typeof v === "number" && Number.isFinite(v)) return v;
+      }
+      if (typeof inner === "string") {
+        try {
+          const parsed = JSON.parse(inner) as Record<string, unknown>;
+          const v = parsed?.recipients;
+          if (typeof v === "number" && Number.isFinite(v)) return v;
+        } catch {
+          // not JSON — ignore
+        }
+      }
+    }
+    return null;
+  } catch {
+    return null;
+  }
+}
 function looksUnconnected(msg: string): boolean {
   return /not (found|connected|enabled)|no .*account/i.test(msg);
 }
@@ -682,7 +748,7 @@ export async function dispatchViaComposioOneSignal(opts: {
   subject: string;
   body: string;
   connectedAccountId?: string | null;
-}): Promise<{ id: string; action: string; accountId: string }> {
+}): Promise<{ id: string; action: string; accountId: string; recipients: number | null }> {
   try {
     const key = typeof opts?.apiKey === "string" ? opts.apiKey.trim() : "";
     if (!key) throw new MissingComposioConfigError();
@@ -738,6 +804,7 @@ export async function dispatchViaComposioOneSignal(opts: {
       id: extractOneSignalId(data) || "unknown",
       action: ONESIGNAL_CREATE_NOTIFICATION_TOOL,
       accountId,
+      recipients: extractRecipients(data),
     };
   } catch (e: unknown) {
     if (

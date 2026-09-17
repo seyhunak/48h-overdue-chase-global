@@ -4,6 +4,7 @@ import { MissingOneSignalConfigError } from "@/infrastructure/onesignal";
 import { MissingOneSignalAppIdError, ChannelNotConnectedError, OneSignalAuthError } from "@/infrastructure/composio";
 import { loadOwnerConnectSettings } from "@/infrastructure/owner-settings";
 import { dispatchNotification } from "@/infrastructure/notify";
+import { debugLog } from "@/infrastructure/flags";
 
 const VALID_CHANNELS = ["email", "sms", "push"] as const;
 type Channel = (typeof VALID_CHANNELS)[number];
@@ -27,12 +28,13 @@ export async function POST(req: Request) {
   }
   if (!body.reminderId) return NextResponse.json({ error: "reminderId required" }, { status: 400 });
 
-  // Validate the requested channel for a clear 400. The queued reminder's own
-  // channel is authoritative and re-validated below.
+  // Validate the requested channel for a clear 400. The requested channel
+  // (per-row override in the UI) is effective; the queued channel is the
+  // default when none is passed.
   const requestedChannel = (body.channel ?? "email").trim().toLowerCase();
   if (!VALID_CHANNELS.includes(requestedChannel as Channel)) {
     return NextResponse.json(
-      { error: `email, sms or push only`, channel: requestedChannel },
+      { error: `Email, SMS or Push only`, channel: requestedChannel },
       { status: 400 },
     );
   }
@@ -60,11 +62,14 @@ export async function POST(req: Request) {
   const queuedChannel = reminder.channel?.toLowerCase() ?? "email";
   if (!VALID_CHANNELS.includes(queuedChannel as Channel)) {
     return NextResponse.json(
-      { error: `email, sms or push only`, channel: queuedChannel },
+      { error: `Email, SMS or Push only`, channel: queuedChannel },
       { status: 400 },
     );
   }
-  const channel: Channel = queuedChannel as Channel;
+  // The UI persists the per-row override via setChannel before approving, so
+  // queued and requested agree in the normal flow. Honor the requested channel
+  // so Email/SMS/Push can be retried without re-queueing.
+  const channel: Channel = requestedChannel as Channel;
 
   async function fail(message: string, status = 502) {
     try {
@@ -110,6 +115,12 @@ export async function POST(req: Request) {
       subject: reminder.subject,
       body: reminder.body,
     });
+    // Trace: raw dispatch result in the server log so Composio → OneSignal
+    // delivery can be audited per notification ID. Gated by DEBUG_MODE
+    // (on by default in dev, off in prod unless explicitly enabled).
+    debugLog(
+      `[reminders/send] ${channel} → ${to} via=${sent.via} onesignalId=${sent.id} recipients=${sent.recipients ?? "unknown"} reminder=${body.reminderId}`,
+    );
     // Mark sent + vault log {timestamp, payloadHash, channel} inside the mutation.
     // NO credit charge at send time (credits are charged at follow-up).
     const updated = await client.mutation((api as any).reminders.markSent, {
@@ -122,6 +133,7 @@ export async function POST(req: Request) {
       channel,
       via: sent.via,
       onesignalId: sent.id,
+      recipients: sent.recipients,
       reminder: updated,
     });
   } catch (e: unknown) {

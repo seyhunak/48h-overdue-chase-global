@@ -23,6 +23,7 @@ type ProviderStatus = {
   envConfigured: boolean;
   probeError: string | null;
   channels: Record<Channel, boolean>;
+  onesignalAccounts?: Array<{ id: string; status: string; working: boolean }>;
   zoho?: {
     connected: boolean;
     pendingAccounts: number;
@@ -80,7 +81,8 @@ function ConnectInner() {
   const [appId, setAppId] = useState("");
   const [touchedUser, setTouchedUser] = useState(false);
   const [touchedAppId, setTouchedAppId] = useState(false);
-  const [busy, setBusy] = useState<"save" | "authorize" | "verify" | "disconnect" | null>(null);
+  const [busy, setBusy] = useState<"save" | "authorize" | "verify" | "disconnect" | "remove" | null>(null);
+  const [removingId, setRemovingId] = useState<string | null>(null);
   const [connectMsg, setConnectMsg] = useState<string | null>(null);
   const [zohoOrgId, setZohoOrgId] = useState("");
   const [touchedZohoOrg, setTouchedZohoOrg] = useState(false);
@@ -191,6 +193,29 @@ function ConnectInner() {
       setConnectMsg(e?.message ?? "verify failed");
     } finally {
       setBusy(null);
+    }
+  }
+
+  async function handleRemoveOneSignal(accountId: string) {
+    if (!user || removingId) return;
+    setRemovingId(accountId);
+    setConnectMsg(null);
+    try {
+      const res = await fetch("/api/connect/onesignal-account", {
+        method: "DELETE",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ accountId }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(data?.error ?? `remove failed (${res.status})`);
+      setConnectMsg(
+        `Removed connection — ${data.remaining ?? "?"} remaining. Keep exactly 1 working account, then Verify.`,
+      );
+      refreshStatus();
+    } catch (e: any) {
+      setConnectMsg(e?.message ?? "remove failed");
+    } finally {
+      setRemovingId(null);
     }
   }
 
@@ -365,6 +390,36 @@ function ConnectInner() {
               <p className="text-xs" style={{ color: "red" }}>
                 {provider.activeAccounts} OneSignal connection(s) found — none accepted by OneSignal. Reconnect with your OneSignal REST API key (not the App ID). Remove old broken connections in the Composio dashboard.
               </p>
+            )}
+            {provider.onesignalAccounts !== undefined && provider.onesignalAccounts.length > 0 && (
+              <div className="mt-1 space-y-1">
+                <p className="text-xs" style={{ color: "var(--color-muted)" }}>
+                  Keep exactly 1 working OneSignal connection — remove the rest:
+                </p>
+                {provider.onesignalAccounts.map((a) => (
+                  <div key={a.id} className="flex flex-wrap items-center gap-2 text-xs">
+                    <span className="tnum font-mono" title={a.id}>
+                      {a.id.slice(0, 12)}…
+                    </span>
+                    <span
+                      className="mono-label rounded-full border px-2 py-0.5"
+                      style={{ borderColor: "var(--color-rule-2)" }}
+                    >
+                      {a.working ? "working" : a.status}
+                    </span>
+                    {!a.working && (
+                      <button
+                        type="button"
+                        onClick={() => handleRemoveOneSignal(a.id)}
+                        disabled={removingId !== null}
+                        className="underline disabled:opacity-50"
+                      >
+                        {removingId === a.id ? "Removing…" : "Remove"}
+                      </button>
+                    )}
+                  </div>
+                ))}
+              </div>
             )}
             {(provider.probeError || provider.zoho?.error) && (
               <p className="text-xs" style={{ color: "red" }}>

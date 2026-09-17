@@ -52,6 +52,9 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
                   <h5>Product</h5>
                   <ul>
                     <li>
+                      <Link href="/product">Product</Link>
+                    </li>
+                    <li>
                       <Link href="/about">About</Link>
                     </li>
                   </ul>
@@ -59,6 +62,9 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
                 <div className="tally-footer__col">
                   <h5>Legal</h5>
                   <ul>
+                    <li>
+                      <Link href="/legal">Legal</Link>
+                    </li>
                     <li>
                       <Link href="/terms">Terms</Link>
                     </li>
@@ -70,6 +76,9 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
                 <div className="tally-footer__col">
                   <h5>Connect</h5>
                   <ul>
+                    <li>
+                      <Link href="/connect">Connect</Link>
+                    </li>
                     <li>
                       <Link href="/contact">Contact</Link>
                     </li>

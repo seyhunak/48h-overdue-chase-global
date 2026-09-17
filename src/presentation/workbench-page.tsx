@@ -10,17 +10,20 @@ import { buildChaseSequence, parseCsv, validateInvoiceRow, type Invoice } from "
 import { getConvexUrl, getClerkPublishableKey } from "@/infrastructure/env";
 import { ReminderDispatchSection } from "@/presentation/reminders-section";
 
-const SAMPLE_CSV = `clientName,invoiceId,amount,currency,dueDate,email,phone
-Acme Corp,INV-001,1200,USD,2026-07-01,ap@acme-corp.example,+14155550101
-Globex,INV-002,850.5,USD,2026-07-05,finance@globex.example,
-Initech,INV-003,4300,EUR,2026-07-10,accounts@initech.example,+493055501200
-Umbrella Co,INV-004,975,USD,2026-07-12,billing@umbrella-co.example,
-Hooli,INV-005,2500,USD,2026-07-15,ap@hooli.example,+14155550188
-Stark Industries,INV-006,11200,USD,2026-07-18,finance@stark-industries.example,
-Wayne Enterprises,INV-007,640,GBP,2026-07-20,accounts@wayne-enterprises.example,
-Massive Dynamic,INV-008,1890,USD,2026-07-22,ap@massive-dynamic.example,
-Cyberdyne,INV-009,3300,USD,2026-07-25,billing@cyberdyne.example,+14155550234
-Tyrell Corp,INV-010,720,EUR,2026-07-28,finance@tyrell-corp.example,`;
+function csvTextToImported(text: string): Invoice[] {
+  const rows = parseCsv(text);
+  return rows.map((row) => ({
+    clientName: row.clientName ?? "",
+    invoiceId: row.invoiceId ?? "",
+    amount: Number(row.amount),
+    currency: (row.currency ?? "USD") || "USD",
+    dueDate: row.dueDate ?? "",
+    email: row.email ?? "",
+    phone: row.phone || undefined,
+    daysOverdue: 0,
+    status: "overdue",
+  }));
+}
 
 function toCsv(rows: Invoice[]): string {
   const header = "clientName,invoiceId,amount,currency,dueDate,email,phone,daysOverdue,status";
@@ -28,6 +31,15 @@ function toCsv(rows: Invoice[]): string {
     [r.clientName, r.invoiceId, String(r.amount), r.currency, r.dueDate, r.email, r.phone ?? "", String(r.daysOverdue), r.status].join(","),
   );
   return [header, ...lines].join("\n");
+}
+
+function fmtDate(ms?: number): string {
+  if (typeof ms !== "number") return "—";
+  try {
+    return new Date(ms).toLocaleString();
+  } catch {
+    return "—";
+  }
 }
 
 function download(filename: string, content: string, mime: string) {
@@ -90,26 +102,36 @@ function WorkbenchInner() {
     historyArgs,
   ) as Array<{ _id: string; kind: string; title: string; createdAt: number }> | undefined;
 
-  const [raw, setRaw] = useState("");
   const [selectedInvoiceId, setSelectedInvoiceId] = useState<string | null>(null);
   const [chasedIds, setChasedIds] = useState<string[]>([]);
+  // Imported invoices live here; the review table below renders straight from
+  // it. (No textarea anymore — "Import from Zoho Invoice" fills this.)
+  const [imported, setImported] = useState<Invoice[]>([]);
   const [zohoBusy, setZohoBusy] = useState(false);
   const [zohoMsg, setZohoMsg] = useState<string | null>(null);
+  const [zohoImportedAt, setZohoImportedAt] = useState<number | null>(null);
   // Collapse/expand state for the sequence preview. First step open by default.
   const [openSteps, setOpenSteps] = useState<Record<string, boolean>>({ "pre-due": true });
 
   const parsed = useMemo(() => {
-    if (!raw) return { valid: [] as Invoice[], errors: [] as string[] };
-    const rows = parseCsv(raw);
     const valid: Invoice[] = [];
     const errors: string[] = [];
-    rows.forEach((row, i) => {
+    for (const inv of imported) {
+      const row: Record<string, string> = {
+        clientName: inv.clientName ?? "",
+        invoiceId: inv.invoiceId ?? "",
+        amount: String(inv.amount ?? ""),
+        currency: inv.currency ?? "USD",
+        dueDate: inv.dueDate ?? "",
+        email: inv.email ?? "",
+        phone: inv.phone ?? "",
+      };
       const r = validateInvoiceRow(row);
       if (r.invoice) valid.push(r.invoice);
-      else errors.push(`row ${i + 2}: ${r.error}`);
-    });
+      else errors.push(`${inv.invoiceId || "?"}: ${r.error}`);
+    }
     return { valid, errors };
-  }, [raw]);
+  }, [imported]);
 
   const balance: number | null = typeof balanceQuery?.balance === "number" ? balanceQuery.balance : null;
 
@@ -168,13 +190,8 @@ function WorkbenchInner() {
   const sortedHistory = pastSubmissions ? [...pastSubmissions].sort((a, b) => (b.createdAt ?? 0) - (a.createdAt ?? 0)) : undefined;
   const sortedVault = vaultEntries ? [...vaultEntries].sort((a, b) => (b.createdAt ?? 0) - (a.createdAt ?? 0)) : undefined;
 
-  function handleRawChange(next: string) {
-    setRaw(next);
-    setChasedIds([]);
-  }
-
-  function handleLoadSample() {
-    setRaw(SAMPLE_CSV);
+  function handleClear() {
+    setImported([]);
     setSelectedInvoiceId(null);
     setChasedIds([]);
   }
@@ -222,15 +239,12 @@ function WorkbenchInner() {
         }
         return;
       }
-      // Shape rows exactly like the CSV flow — everything downstream
+      // Use Zoho rows directly — everything downstream
       // (validation, credits, sequence preview, sweep) is unchanged.
-      const header = "clientName,invoiceId,amount,currency,dueDate,email";
-      const lines = invoices.map((inv) =>
-        [inv.clientName, inv.invoiceId, String(inv.amount), inv.currency, inv.dueDate, inv.email ?? ""].join(","),
-      );
-      setRaw([header, ...lines].join("\n"));
+      setImported(invoices);
       setSelectedInvoiceId(null);
       setChasedIds([]);
+      setZohoImportedAt(Date.now());
       setZohoMsg(
         `Imported ${invoices.length} invoice(s) from Zoho${skipped.length > 0 ? ` (${skipped.length} skipped: paid/draft)` : ""} — review, then press Follow up.`,
       );
@@ -299,17 +313,9 @@ function WorkbenchInner() {
             className="text-sm"
             onChange={(e) => {
               const f = e.target.files?.[0];
-              if (f) f.text().then((t) => { setRaw(t); setSelectedInvoiceId(null); setChasedIds([]); });
+              if (f) f.text().then((t) => { setImported(csvTextToImported(t)); setSelectedInvoiceId(null); setChasedIds([]); });
             }}
           />
-          <button
-            type="button"
-            onClick={handleLoadSample}
-            className="hallmark-btn rounded-md border px-4 py-2 text-sm"
-            style={{ borderColor: "var(--color-rule-2)" }}
-          >
-            Load sample (10 invoices)
-          </button>
           <button
             type="button"
             onClick={handleZohoImport}
@@ -323,12 +329,18 @@ function WorkbenchInner() {
         {zohoMsg && (
           <p className="mt-2 text-sm" style={{ color: "var(--color-ink)" }}>{zohoMsg}</p>
         )}
-        <textarea
-          className="mt-3 h-28 w-full rounded-md border p-2 font-mono text-xs"
-          placeholder="clientName,invoiceId,amount,currency,dueDate,email&#10;Acme,INV-001,1200,USD,2026-07-01,ap@acme-corp.example"
-          value={raw}
-          onChange={(e) => handleRawChange(e.target.value)}
-        />
+        <div className="mt-3 flex flex-wrap items-center gap-3 text-sm" style={{ color: "var(--color-muted)" }}>
+          <span>
+            {parsed.valid.length > 0
+              ? `${parsed.valid.length} invoice(s) ready to review below${zohoImportedAt ? ` · imported ${new Date(zohoImportedAt).toLocaleString()}` : ""}`
+              : "No invoices yet — upload a CSV or import from Zoho."}
+          </span>
+          {imported.length > 0 && (
+            <button type="button" onClick={handleClear} className="underline">
+              Clear
+            </button>
+          )}
+        </div>
       </div>
 
       <div className="mt-6 rounded-[10px] border p-4" style={{ borderColor: "var(--color-rule-2)" }}>
@@ -380,7 +392,7 @@ function WorkbenchInner() {
         </button>
         {isAlreadyChased && (
           <p className="mt-2 text-sm" style={{ color: "var(--color-muted)" }}>
-            Followed up {chasedIds.length} invoice(s) · used {chasedIds.length} credit(s) · balance now {balance}. Edit the CSV to follow up on a new batch.
+            Followed up {chasedIds.length} invoice(s) · used {chasedIds.length} credit(s) · balance now {balance}. Import a new batch to follow up again.
           </p>
         )}
         {!isAlreadyChased && chasedIds.length === 0 && parsed.valid.length > 0 && (
@@ -475,22 +487,47 @@ function WorkbenchInner() {
             <p className="mt-2 text-sm" style={{ color: "var(--color-muted)" }}>No past follow-ups yet — follow up on a batch to log it here.</p>
           )}
           {sortedHistory !== undefined && sortedHistory.length > 0 && (
-            <ul className="tnum mt-2 text-sm" style={{ color: "var(--color-muted)" }}>
-              {sortedHistory.map((h) => (
-                <li key={h._id}>
-                  {h.clientName} · {h.invoiceId} · status: {h.status === "chased" ? "followed up" : h.status} · credits used: {h.creditsUsed}
-                </li>
-              ))}
-            </ul>
+            <div className="mt-2 overflow-x-auto">
+              <table className="tnum w-full text-sm">
+                <thead>
+                  <tr className="mono-label text-left" style={{ color: "var(--color-muted)" }}>
+                    <th>Client</th><th>Invoice</th><th>Amount</th><th>Status</th><th>Credits</th><th>Date</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {sortedHistory.map((h) => (
+                    <tr key={h._id} className="border-t">
+                      <td>{h.clientName}</td>
+                      <td>{h.invoiceId}</td>
+                      <td>{typeof h.amount === "number" ? h.amount.toFixed(2) : "—"}</td>
+                      <td style={{ color: "var(--color-muted)" }}>{h.status === "chased" ? "followed up" : h.status}</td>
+                      <td>{h.creditsUsed}</td>
+                      <td>{fmtDate(h.createdAt)}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
           )}
           {sortedVault !== undefined && sortedVault.length > 0 && (
-            <ul className="tnum mt-2 text-sm" style={{ color: "var(--color-muted)" }}>
-              {sortedVault.map((v) => (
-                <li key={v._id}>
-                  vault · {v.kind} · {v.title}
-                </li>
-              ))}
-            </ul>
+            <div className="mt-3 overflow-x-auto">
+              <table className="tnum w-full text-sm">
+                <thead>
+                  <tr className="mono-label text-left" style={{ color: "var(--color-muted)" }}>
+                    <th>Kind</th><th>Title</th><th>Date</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {sortedVault.map((v) => (
+                    <tr key={v._id} className="border-t">
+                      <td>{v.kind}</td>
+                      <td>{v.title}</td>
+                      <td>{fmtDate(v.createdAt)}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
           )}
         </div>
         <div className="mt-3 flex gap-2">
@@ -501,9 +538,27 @@ function WorkbenchInner() {
             Export PDF
           </button>
         </div>
-        <ul className="tnum mt-3 text-sm" style={{ color: "var(--color-muted)" }}>
-          {parsed.valid.map((r) => <li key={r.invoiceId}>vault · {r.clientName} · {r.invoiceId}</li>)}
-        </ul>
+        {parsed.valid.length > 0 && (
+          <div className="mt-3 overflow-x-auto">
+            <table className="tnum w-full text-sm">
+              <thead>
+                <tr className="mono-label text-left" style={{ color: "var(--color-muted)" }}>
+                  <th>Client</th><th>Invoice</th><th>Amount</th><th>Due</th>
+                </tr>
+              </thead>
+              <tbody>
+                {parsed.valid.map((r) => (
+                  <tr key={r.invoiceId} className="border-t">
+                    <td>{r.clientName}</td>
+                    <td>{r.invoiceId}</td>
+                    <td>{r.currency} {r.amount.toFixed(2)}</td>
+                    <td>{r.dueDate}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
       </div>
 
       <ReminderDispatchSection userId={user.id} />

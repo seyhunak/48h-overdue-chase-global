@@ -1,7 +1,8 @@
 "use client";
 
 import { useMutation, useQuery } from "convex/react";
-import { useState } from "react";
+import { useState, type ReactNode } from "react";
+import Link from "next/link";
 import { api } from "../../convex/_generated/api";
 
 type Reminder = {
@@ -9,6 +10,7 @@ type Reminder = {
   clientName: string;
   invoiceId: string;
   recipientEmail?: string;
+  recipientPhone?: string;
   channel?: string;
   stepKey: string;
   subject: string;
@@ -21,6 +23,47 @@ type Reminder = {
 };
 
 const CHANNELS = ["email", "sms", "push"] as const;
+type Channel = (typeof CHANNELS)[number];
+
+const CHANNEL_LABEL: Record<Channel, string> = { email: "Email", sms: "SMS", push: "Push" };
+
+function channelLabel(value?: string | null): string {
+  const v = (value ?? "email").trim().toLowerCase();
+  if (v === "email") return "Email";
+  if (v === "sms") return "SMS";
+  if (v === "push") return "Push";
+  // Titlecase anything unexpected instead of leaking raw lowercase.
+  return v ? v.charAt(0).toUpperCase() + v.slice(1) : "Email";
+}
+
+function normalizeChannel(value?: string | null): Channel {
+  const v = (value ?? "email").trim().toLowerCase();
+  return v === "sms" || v === "push" ? (v as Channel) : "email";
+}
+
+function titlecaseStatus(value?: string | null): string {
+  const v = (value ?? "").trim().toLowerCase().replace(/_/g, " ");
+  return v ? v.charAt(0).toUpperCase() + v.slice(1) : "—";
+}
+
+function Pill({ tone, children }: { tone: "ok" | "bad" | "muted"; children: ReactNode }) {
+  const color =
+    tone === "ok" ? "var(--color-ok)" : tone === "bad" ? "var(--color-warning)" : "var(--color-muted)";
+  return (
+    <span
+      className="mono-label inline-block rounded-full border px-2.5 py-0.5"
+      style={{ borderColor: "var(--color-rule-2)", color }}
+    >
+      {children}
+    </span>
+  );
+}
+
+function StatusPill({ status }: { status?: string | null }) {
+  const v = (status ?? "").trim().toLowerCase();
+  const tone = v === "sent" ? "ok" : v === "failed" ? "bad" : "muted";
+  return <Pill tone={tone}>{titlecaseStatus(status)}</Pill>;
+}
 
 function fmtUtc(ms: number): string {
   try {
@@ -48,6 +91,8 @@ export function ReminderDispatchSection({ userId }: { userId: string }) {
   const doSweep = useMutation((api as any).reminders.runDueSweepForOwner);
   const doApprove = useMutation((api as any).reminders.approve);
   const doSkip = useMutation((api as any).reminders.skip);
+  const doSetChannel = useMutation((api as any).reminders.setChannel);
+  const doRetry = useMutation((api as any).reminders.retry);
 
   const [busy, setBusy] = useState<string[]>([]);
   const [rowError, setRowError] = useState<Record<string, string>>({});
@@ -90,9 +135,19 @@ export function ReminderDispatchSection({ userId }: { userId: string }) {
     setRowError((m) => ({ ...m, [r._id]: "" }));
     setRowOk((m) => ({ ...m, [r._id]: "" }));
     markBusy(r._id, true);
-    // The queue's own channel is authoritative (the send route re-validates).
-    const channel = r.channel === "sms" || r.channel === "push" ? r.channel : "email";
+    // Per-row channel override wins; the queued channel is the default.
+    // Persisted first so the audit trail (vault log) matches what was sent.
+    const channel = normalizeChannel(rowChannel[r._id] ?? r.channel);
+    // Recipient follows the channel: SMS needs the phone number, Email/Push
+    // use the email address.
+    const to =
+      channel === "sms"
+        ? (r.recipientPhone?.trim() || "")
+        : (r.recipientEmail?.trim() || "");
     try {
+      if (normalizeChannel(r.channel) !== channel) {
+        await doSetChannel({ ownerClerkId: userId, reminderId: r._id, channel });
+      }
       await doApprove({ ownerClerkId: userId, reminderId: r._id });
       const res = await fetch("/api/reminders/send", {
         method: "POST",
@@ -102,12 +157,20 @@ export function ReminderDispatchSection({ userId }: { userId: string }) {
         body: JSON.stringify({
           reminderId: r._id,
           channel,
-          ...(r.recipientEmail?.trim() ? { to: r.recipientEmail.trim() } : {}),
+          ...(to ? { to } : {}),
         }),
       });
       const data = await res.json().catch(() => ({}));
       if (!res.ok) throw new Error(data?.error ?? `send failed (${res.status})`);
-      setRowOk((m) => ({ ...m, [r._id]: `Approved + sent via ${channel}.` }));
+      const recipients = typeof data?.recipients === "number" ? data.recipients : null;
+      const onesignalId = typeof data?.onesignalId === "string" ? data.onesignalId : null;
+      setRowOk((m) => ({
+        ...m,
+        [r._id]:
+          recipients === 0
+            ? `Accepted by OneSignal but 0 recipients — the address is likely not subscribed in this OneSignal app, or the email sender is not configured. Check the OneSignal dashboard (Messages → Delivery, Audience, Settings → Email).`
+            : `Approved + sent via ${channelLabel(channel)}${recipients !== null ? ` — ${recipients} recipient(s)` : ""}${onesignalId ? ` · ID ${onesignalId}` : ""}.`,
+      }));
     } catch (e: any) {
       setRowError((m) => ({ ...m, [r._id]: e?.message ?? "failed" }));
     } finally {
@@ -122,6 +185,20 @@ export function ReminderDispatchSection({ userId }: { userId: string }) {
       await doSkip({ ownerClerkId: userId, reminderId: r._id });
     } catch (e: any) {
       setRowError((m) => ({ ...m, [r._id]: e?.message ?? "skip failed" }));
+    } finally {
+      markBusy(r._id, false);
+    }
+  }
+
+  async function handleRetry(r: Reminder) {
+    setRowError((m) => ({ ...m, [r._id]: "" }));
+    setRowOk((m) => ({ ...m, [r._id]: "" }));
+    markBusy(r._id, true);
+    try {
+      await doRetry({ ownerClerkId: userId, reminderId: r._id });
+      setRowOk((m) => ({ ...m, [r._id]: "Re-queued for approval — pick a channel above and Approve + Send." }));
+    } catch (e: any) {
+      setRowError((m) => ({ ...m, [r._id]: e?.message ?? "retry failed" }));
     } finally {
       markBusy(r._id, false);
     }
@@ -197,12 +274,32 @@ export function ReminderDispatchSection({ userId }: { userId: string }) {
                 <tr key={r._id} className="border-t">
                   <td>{r.clientName}</td>
                   <td>{r.invoiceId}</td>
-                  <td>{r.recipientEmail?.trim() ? r.recipientEmail : "—"}</td>
+                  <td>
+                    {r.recipientEmail?.trim() ? r.recipientEmail : "—"}
+                    {r.recipientPhone?.trim() ? ` · ${r.recipientPhone.trim()}` : ""}
+                  </td>
                   <td>{r.stepKey}</td>
                   <td className="max-w-[280px] truncate" title={r.subject}>
                     {r.subject}
                   </td>
-                  <td>{r.channel ?? "email"}</td>
+                  <td>
+                    <select
+                      aria-label={`Channel for ${r.invoiceId}`}
+                      className="rounded-md border p-1 text-xs"
+                      style={{ borderColor: "var(--color-rule-2)", color: "var(--color-ink)" }}
+                      value={normalizeChannel(rowChannel[r._id] ?? r.channel)}
+                      onChange={(e) =>
+                        setRowChannel((m) => ({ ...m, [r._id]: normalizeChannel(e.target.value) }))
+                      }
+                      disabled={isBusy(r._id)}
+                    >
+                      {CHANNELS.map((c) => (
+                        <option key={c} value={c}>
+                          {CHANNEL_LABEL[c]}
+                        </option>
+                      ))}
+                    </select>
+                  </td>
                   <td>{fmtUtc(r.scheduledFor)}</td>
                   <td>
                     <div className="flex flex-wrap items-center gap-2 py-1">
@@ -226,7 +323,12 @@ export function ReminderDispatchSection({ userId }: { userId: string }) {
                     </div>
                     {rowError[r._id] && (
                       <p className="text-xs" style={{ color: "var(--color-warning)" }}>
-                        {rowError[r._id]}
+                        {rowError[r._id]}{" "}
+                        {/connect OneSignal/i.test(rowError[r._id]) && (
+                          <Link className="underline" href="/connect">
+                            Open /connect
+                          </Link>
+                        )}
                       </p>
                     )}
                     {rowOk[r._id] && (
@@ -246,7 +348,7 @@ export function ReminderDispatchSection({ userId }: { userId: string }) {
         Recent sweep decisions
       </h3>
       <p className="mt-1 text-xs" style={{ color: "var(--color-muted)" }}>
-        What the intelligent sweep decided per invoice — queue a reminder (email/SMS) or do nothing, and why. Decisions never send; sending still needs your approval above.
+        What the intelligent sweep decided per invoice — queue a reminder (Email/SMS) or do nothing, and why. Decisions never send; sending still needs your approval above.
       </p>
       {decisions === undefined && (
         <p className="mt-2 text-sm" style={{ color: "var(--color-muted)" }}>
@@ -259,29 +361,47 @@ export function ReminderDispatchSection({ userId }: { userId: string }) {
         </p>
       )}
       {decisions !== undefined && decisions.length > 0 && (
-        <ul className="tnum mt-2 text-sm" style={{ color: "var(--color-muted)" }}>
-          {decisions.map((d: any) => (
-            <li key={d._id}>
-              <span
-                style={{
-                  color:
-                    d.action === "queue"
-                      ? d.channel === "sms"
-                        ? "var(--color-warning)"
-                        : "var(--color-ok)"
-                      : "var(--color-muted)",
-                  fontWeight: 600,
-                }}
-              >
-                {d.action === "queue" ? `queue ${d.channel}` : "do nothing"}
-              </span>{" "}
-              · {d.invoiceId}
-              {d.stepKey ? ` · ${d.stepKey}` : ""} · {d.reason}
-              {d.detail ? ` — ${d.detail}` : ""}
-              <span style={{ opacity: 0.7 }}> · {fmtUtc(d.createdAt)}</span>
-            </li>
-          ))}
-        </ul>
+        <div className="mt-2 overflow-x-auto">
+          <table className="tnum w-full text-sm">
+            <thead>
+              <tr className="mono-label text-left" style={{ color: "var(--color-muted)" }}>
+                <th>Decision</th>
+                <th>Invoice</th>
+                <th>Step</th>
+                <th>Reason</th>
+                <th>Time</th>
+              </tr>
+            </thead>
+            <tbody>
+              {decisions.map((d: any) => (
+                <tr key={d._id} className="border-t">
+                  <td>
+                    <span
+                      style={{
+                        color:
+                          d.action === "queue"
+                            ? d.channel === "sms"
+                              ? "var(--color-warning)"
+                              : "var(--color-ok)"
+                            : "var(--color-muted)",
+                        fontWeight: 600,
+                      }}
+                    >
+                      {d.action === "queue" ? `Queue ${channelLabel(d.channel)}` : "Do nothing"}
+                    </span>
+                  </td>
+                  <td>{d.invoiceId}</td>
+                  <td>{d.stepKey ?? "—"}</td>
+                  <td className="max-w-[320px]">
+                    {d.reason}
+                    {d.detail ? <span style={{ color: "var(--color-muted)" }}> — {d.detail}</span> : ""}
+                  </td>
+                  <td style={{ color: "var(--color-muted)" }}>{fmtUtc(d.createdAt)}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
       )}
 
       <h3 className="mono-label mt-5" style={{ color: "var(--color-muted)" }}>
@@ -298,16 +418,74 @@ export function ReminderDispatchSection({ userId }: { userId: string }) {
         </p>
       )}
       {history !== undefined && history.length > 0 && (
-        <ul className="tnum mt-2 text-sm" style={{ color: "var(--color-muted)" }}>
-          {history.map((r) => (
-            <li key={r._id}>
-              {r.clientName} · {r.invoiceId} · {r.stepKey} · status: {r.status}
-              {typeof r.sentAt === "number" ? ` · sent ${fmtUtc(r.sentAt)}` : ""}
-              {typeof r.attempts === "number" ? ` · attempts: ${r.attempts}` : ""}
-              {r.lastError ? ` · error: ${r.lastError}` : ""}
-            </li>
-          ))}
-        </ul>
+        <div className="mt-2 overflow-x-auto">
+          <table className="tnum w-full text-sm">
+            <thead>
+              <tr className="mono-label text-left" style={{ color: "var(--color-muted)" }}>
+                <th>Client</th>
+                <th>Invoice</th>
+                <th>Step</th>
+                <th>Channel</th>
+                <th>Status</th>
+                <th>Attempts</th>
+                <th>Sent</th>
+                <th>Error</th>
+                <th>Actions</th>
+              </tr>
+            </thead>
+            <tbody>
+              {history.map((r) => (
+                <tr key={r._id} className="border-t">
+                  <td>{r.clientName}</td>
+                  <td>{r.invoiceId}</td>
+                  <td>{r.stepKey}</td>
+                  <td><Pill tone="muted">{channelLabel(r.channel)}</Pill></td>
+                  <td><StatusPill status={r.status} /></td>
+                  <td>{typeof r.attempts === "number" ? r.attempts : "—"}</td>
+                  <td>{typeof r.sentAt === "number" ? fmtUtc(r.sentAt) : "—"}</td>
+                  <td className="max-w-[280px]">
+                    {r.lastError ? (
+                      <span title={r.lastError} className="block truncate">
+                        {r.lastError}
+                      </span>
+                    ) : (
+                      "—"
+                    )}
+                  </td>
+                  <td>
+                    <div className="flex flex-wrap items-center gap-2 py-1">
+                      {r.status === "failed" && (
+                        <button
+                          type="button"
+                          onClick={() => handleRetry(r)}
+                          disabled={isBusy(r._id)}
+                          className="underline disabled:opacity-50"
+                        >
+                          {isBusy(r._id) ? "Working…" : "Retry"}
+                        </button>
+                      )}
+                      {/connect OneSignal/i.test(r.lastError ?? "") && (
+                        <Link className="underline" href="/connect">
+                          Open /connect
+                        </Link>
+                      )}
+                    </div>
+                    {rowError[r._id] && (
+                      <p className="text-xs" style={{ color: "var(--color-warning)" }}>
+                        {rowError[r._id]}
+                      </p>
+                    )}
+                    {rowOk[r._id] && (
+                      <p className="text-xs" style={{ color: "var(--color-ok)" }}>
+                        {rowOk[r._id]}
+                      </p>
+                    )}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
       )}
     </div>
   );

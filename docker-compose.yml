@@ -1,0 +1,31 @@
+# ClearDue on a $5 VPS (1 vCPU / 1 GB). No deploy happens from here —
+# this is the target shape for when hosting is provisioned.
+#   docker compose --env-file .env.production up -d --build
+services:
+  app:
+    build:
+      context: .
+      args:
+        NEXT_PUBLIC_CONVEX_URL: ${NEXT_PUBLIC_CONVEX_URL:?set in .env.production}
+        NEXT_PUBLIC_CONVEX_SITE_URL: ${NEXT_PUBLIC_CONVEX_SITE_URL:-}
+        NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY: ${NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY:?set in .env.production}
+        NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY: ${NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY:-}
+        NEXT_PUBLIC_SITE_URL: ${NEXT_PUBLIC_SITE_URL:?set in .env.production}
+    env_file:
+      - .env.production
+    environment:
+      NODE_ENV: production
+      # Feature switches (see src/infrastructure/flags.ts). Debug stays OFF
+      # in prod unless explicitly enabled:
+      # DEBUG_MODE: "false"
+    ports:
+      # Nginx (host) proxies 80/443 -> 127.0.0.1:3000. Never expose 3000 publicly.
+      - "127.0.0.1:3000:3000"
+    restart: unless-stopped
+    mem_limit: 850m
+    mem_reservation: 400m
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"

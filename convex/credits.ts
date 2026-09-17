@@ -27,6 +27,14 @@ export const getOrCreate = mutation({
   },
 });
 
+export const listAll = query({
+  // Admin overview: every owner's balance + lifetime usage.
+  args: {},
+  handler: async (ctx: any) => {
+    return await ctx.db.query("credits").collect();
+  },
+});
+
 export const getBalance = query({
   args: { clerkId: v.string() },
   handler: async (ctx: any, args: any) => {

@@ -69,7 +69,7 @@ async function sendEmail(opts: {
   to: string;
   subject: string;
   body: string;
-}): Promise<{ id: string }> {
+}): Promise<{ id: string; recipients: number | null }> {
   const { appId, apiKey } = requireOneSignalKeys();
   const res = await onesignalRequest("/notifications", { appId, apiKey }, "POST", {
     app_id: appId,
@@ -85,13 +85,13 @@ async function sendEmail(opts: {
     throw err;
   }
   const json = await res.json();
-  return { id: json.id ?? json.notification_id ?? "unknown" };
+  return { id: json.id ?? json.notification_id ?? "unknown", recipients: json.recipients ?? null };
 }
 
 async function sendSms(opts: {
   to: string;
   body: string;
-}): Promise<{ id: string }> {
+}): Promise<{ id: string; recipients: number | null }> {
   const { appId, apiKey } = requireOneSignalKeys();
   const from = getSmsFrom();
   const res = await onesignalRequest("/notifications", { appId, apiKey }, "POST", {
@@ -108,14 +108,14 @@ async function sendSms(opts: {
     throw err;
   }
   const json = await res.json();
-  return { id: json.id ?? json.notification_id ?? "unknown" };
+  return { id: json.id ?? json.notification_id ?? "unknown", recipients: json.recipients ?? null };
 }
 
 async function sendPush(opts: {
   to: string;
   subject: string;
   body: string;
-}): Promise<{ id: string }> {
+}): Promise<{ id: string; recipients: number | null }> {
   const { appId, apiKey } = requireOneSignalKeys();
   const res = await onesignalRequest("/notifications", { appId, apiKey }, "POST", {
     app_id: appId,
@@ -134,7 +134,7 @@ async function sendPush(opts: {
     throw err;
   }
   const json = await res.json();
-  return { id: json.id ?? json.notification_id ?? "unknown" };
+  return { id: json.id ?? json.notification_id ?? "unknown", recipients: json.recipients ?? null };
 }
 
 export async function dispatchViaOneSignal(opts: {
@@ -142,7 +142,7 @@ export async function dispatchViaOneSignal(opts: {
   to: string;
   subject: string;
   body: string;
-}): Promise<{ id: string }> {
+}): Promise<{ id: string; recipients: number | null }> {
   switch (opts.channel) {
     case "email":
       return sendEmail(opts);

@@ -37,6 +37,7 @@ export async function GET() {
   let pendingAccounts = 0;
   let activeAccounts = 0;
   let probeError: string | null = null;
+  let onesignalAccounts: Array<{ id: string; status: string; working: boolean }> = [];
 
   if (composioConfigured) {
     const apiKey = settings.composioKey ?? process.env.COMPOSIO_API_KEY ?? "";
@@ -49,13 +50,21 @@ export async function GET() {
       pendingAccounts = accounts.length - active.length;
       activeAccounts = active.length;
       // "Connected" means a connection that can actually talk to OneSignal
-      // (the owner's App ID), not merely a completed auth flow.
-      const working = settings.onesignalAppId
-        ? await pickWorkingOneSignalAccount({ apiKey, entityId, appId: settings.onesignalAppId })
+      // (the owner's App ID), not merely a completed auth flow. The send path
+      // falls back to ONESIGNAL_APP_ID, so status uses the same effective ID.
+      const effectiveAppId =
+        settings.onesignalAppId?.trim() || process.env.ONESIGNAL_APP_ID?.trim() || "";
+      const working = effectiveAppId
+        ? await pickWorkingOneSignalAccount({ apiKey, entityId, appId: effectiveAppId })
         : null;
       connected = Boolean(working);
       accountId = working?.accountId ?? null;
       accountStatus = working ? "ACTIVE" : active.length > 0 ? "ACTIVE_BUT_REJECTED" : null;
+      onesignalAccounts = accounts.map((a) => ({
+        id: a.id,
+        status: a.status,
+        working: working?.accountId === a.id,
+      }));
     } catch (e: unknown) {
       probeError = e instanceof Error && e.message ? e.message.slice(0, 300) : "composio probe failed";
     }
@@ -100,6 +109,9 @@ export async function GET() {
     connected,
     accountId,
     accountStatus,
+    // Every OneSignal connection for this owner (short ids for display +
+    // remove buttons). Keep exactly 1 working account; delete the rest.
+    onesignalAccounts,
     pendingAccounts,
     activeAccounts,
     envConfigured,

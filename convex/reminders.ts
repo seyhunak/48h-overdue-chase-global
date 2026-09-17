@@ -658,6 +658,19 @@ export const skip = mutation({
   },
 });
 
+export const retry = mutation({
+  // Re-queue a failed send for another approval attempt (keeps attempts count
+  // so the sweep's MAX_ATTEMPTS_BEFORE_PAUSE backstop still applies).
+  args: { ownerClerkId: v.string(), reminderId: v.id("reminders") },
+  handler: async (ctx: any, args: any) => {
+    const row = await ctx.db.get(args.reminderId);
+    if (!row || row.ownerClerkId !== args.ownerClerkId) throw new Error("reminder not found");
+    if (row.status !== "failed") throw new Error(`cannot retry from status ${row.status}`);
+    await ctx.db.patch(row._id, { status: "pending_approval", lastError: undefined });
+    return await ctx.db.get(row._id);
+  },
+});
+
 export const cancel = mutation({
   args: { ownerClerkId: v.string(), reminderId: v.id("reminders") },
   handler: async (ctx: any, args: any) => {

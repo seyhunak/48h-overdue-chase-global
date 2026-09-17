@@ -205,6 +205,6 @@ export function decideSweepAction(input: SweepDecisionInput): SweepDecision {
   return {
     action: "none",
     channel: "none",
-    reason: "no recipient email on invoice — add one in the CSV and re-chase",
+    reason: "no recipient email on invoice — add one and re-chase",
   };
 }

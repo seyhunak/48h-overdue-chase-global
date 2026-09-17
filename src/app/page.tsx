@@ -37,8 +37,9 @@ export default function LandingPage() {
                 Get every overdue invoice <span className="italic-accent">paid</span> without the awkward follow-up.
               </h1>
               <p className="tally-hero__sub">
-                Upload your overdue CSV. Validate in seconds. Fire a proven 4-step follow-up sequence. Export the
-                vault as PDF + CSV. Built for founders and COOs at 5–50 person service firms.
+                Import your overdue invoices — CSV upload or straight from Zoho. Validate in seconds. Fire a
+                proven 4-step follow-up sequence over Email, SMS, and Push. Export the vault as PDF + CSV.
+                Built for founders and COOs at 5–50 person service firms.
               </p>
               <div className="tally-hero__ctas">
                 <Link href="/app" className="tally-btn-primary">
@@ -46,7 +47,8 @@ export default function LandingPage() {
                 </Link>
               </div>
               <div className="tally-hero__fineprint">
-                <span>CSV in · vault out</span>
+                <span>CSV or Zoho in · vault out</span>
+                <span>Email · SMS · Push</span>
                 <span>1 credit / invoice</span>
                 <span>3 free on signup</span>
               </div>
@@ -115,8 +117,8 @@ export default function LandingPage() {
               </h2>
             </div>
             <p className="tally-section-head__desc">
-              Drop in a CSV. The queue ranks every overdue invoice, the sequence writes itself, and the vault
-              logs each touch — before Friday&apos;s spreadsheet archaeology even starts.
+              Drop in a CSV or import from Zoho. The queue ranks every overdue invoice, the sequence writes
+              itself, and the vault logs each touch — before Friday&apos;s spreadsheet archaeology even starts.
             </p>
           </div>
 
@@ -248,17 +250,19 @@ export default function LandingPage() {
           </div>
           <div className="tally-features__grid">
             <article className="tally-feature">
-              <div className="tally-feature__art">clientName, invoiceId, amount, currency, dueDate, email → validated in seconds</div>
+              <div className="tally-feature__art">CSV upload or Zoho import → validated in seconds</div>
               <h3 className="tally-feature__title">Validate in seconds</h3>
               <p className="tally-feature__desc">
-                CSV upload becomes a clean validation table — amounts, currencies, due dates, days overdue.
+                CSV upload or one-click Zoho import becomes a clean validation table — amounts, currencies,
+                due dates, days overdue.
               </p>
             </article>
             <article className="tally-feature">
-              <div className="tally-feature__art">pre-due → due → +7 → +14 → +30 · polite by default</div>
+              <div className="tally-feature__art">pre-due → due → +7 → +14 → +30 · Email · SMS · Push</div>
               <h3 className="tally-feature__title">Follow up on rails</h3>
               <p className="tally-feature__desc">
-                A proven 4-step sequence preview for every invoice — firm when it must be, polite always.
+                A proven 4-step sequence preview for every invoice — sent over Email, SMS, and Push, firm
+                when it must be, polite always.
               </p>
             </article>
             <article className="tally-feature">
@@ -287,8 +291,9 @@ export default function LandingPage() {
             <div className="tally-tier__price tnum">100 credits — $99</div>
             <p className="tally-tier__desc">$0.99/credit · 1 credit per invoice followed up · free 3 on signup</p>
             <ul className="tally-tier__features">
-              <li>CSV validation in seconds</li>
+              <li>CSV upload or Zoho import, validated in seconds</li>
               <li>4-step follow-up sequence preview</li>
+              <li>Send over Email, SMS, and Push</li>
               <li>Vault log + PDF and CSV export</li>
               <li>Built for 5–50 person service firms</li>
             </ul>
@@ -318,7 +323,8 @@ export default function LandingPage() {
               Clear your oldest invoice this <span className="italic-accent">afternoon</span>.
             </h2>
             <p className="tally-cta__sub">
-              Upload the CSV, preview the 4-step follow-up, export the vault — all before standup runs long.
+              Import your invoices — CSV or Zoho — preview the 4-step follow-up, send it over Email, SMS,
+              or Push, and export the vault — all before standup runs long.
             </p>
             <Link href="/app" className="tally-tier__cta">
               Open the workbench →
