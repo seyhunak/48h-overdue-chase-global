@@ -138,6 +138,10 @@ export default defineSchema({
     composioUser: v.optional(v.string()),
     composioVerifiedAt: v.optional(v.number()),
     onesignalAppId: v.optional(v.string()),
+    // Zoho Invoice import (Composio-managed OAuth2): owner's Zoho org id and a
+    // pinned connected account id. No Zoho credential is ever stored here.
+    zohoOrgId: v.optional(v.string()),
+    zohoAccountId: v.optional(v.string()),
     preferredAccount: v.optional(
       v.object({
         whatsapp: v.optional(v.string()),

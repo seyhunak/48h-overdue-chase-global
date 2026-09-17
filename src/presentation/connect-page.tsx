@@ -23,6 +23,15 @@ type ProviderStatus = {
   envConfigured: boolean;
   probeError: string | null;
   channels: Record<Channel, boolean>;
+  zoho?: {
+    connected: boolean;
+    pendingAccounts: number;
+    activeAccounts: number;
+    accountId: string | null;
+    orgIdConfigured: boolean;
+    accountPinned: boolean;
+    error: string | null;
+  };
 };
 
 function Badge({ ok, label }: { ok: boolean; label: string }) {
@@ -57,6 +66,7 @@ function ConnectInner() {
         composioVerifiedAt: number | null;
         hasAppId: boolean;
         onesignalAppId: string;
+        zohoOrgId?: string;
       }
     | undefined;
 
@@ -72,6 +82,9 @@ function ConnectInner() {
   const [touchedAppId, setTouchedAppId] = useState(false);
   const [busy, setBusy] = useState<"save" | "authorize" | "verify" | "disconnect" | null>(null);
   const [connectMsg, setConnectMsg] = useState<string | null>(null);
+  const [zohoOrgId, setZohoOrgId] = useState("");
+  const [touchedZohoOrg, setTouchedZohoOrg] = useState(false);
+  const [zohoMsg, setZohoMsg] = useState<string | null>(null);
 
   const refreshStatus = useCallback(() => {
     fetch("/api/connect/provider-status")
@@ -93,6 +106,10 @@ function ConnectInner() {
   useEffect(() => {
     if (!touchedAppId && status?.onesignalAppId) setAppId(status.onesignalAppId);
   }, [status, touchedAppId]);
+
+  useEffect(() => {
+    if (!touchedZohoOrg && status?.zohoOrgId) setZohoOrgId(status.zohoOrgId);
+  }, [status, touchedZohoOrg]);
   async function handleSave() {
     if (!user) return;
     setConnectMsg(null);
@@ -193,6 +210,109 @@ function ConnectInner() {
     }
   }
 
+  const doSaveZohoOrg = useMutation((api as any).reminders.saveZohoOrgId);
+
+  async function handleZohoSaveOrg() {
+    if (!user) return;
+    setZohoMsg(null);
+    if (!zohoOrgId.trim()) {
+      setZohoMsg("Paste your Zoho organization ID first (optional for single-org accounts).");
+      return;
+    }
+    setBusy("save");
+    try {
+      // Re-pin the currently-working connected account alongside the org id so
+      // imports always use the same authorized connection even if Composio
+      // lists several. `npx convex codegen` + `npx convex deploy` have been run
+      // so the live deployment accepts the optional 3rd arg (verified via
+      // function-spec: [ownerClerkId, zohoAccountId, zohoOrgId]).
+      let pinnedAccountId: string | undefined;
+      try {
+        const st = await fetch("/api/connect/provider-status").then((r) => r.json()).catch(() => null);
+        const live = (st as any)?.zoho;
+        if (typeof live?.accountId === "string" && live.accountId.trim()) {
+          pinnedAccountId = live.accountId.trim();
+        }
+      } catch {
+        // Best effort — org id alone is enough; imports fall back to the first
+        // ACTIVE account when nothing is pinned.
+      }
+      await doSaveZohoOrg({
+        ownerClerkId: user.id,
+        zohoOrgId: zohoOrgId.trim(),
+        ...(pinnedAccountId ? { zohoAccountId: pinnedAccountId } : {}),
+      });
+      setZohoMsg(
+        pinnedAccountId
+          ? "Zoho org ID + connected account saved — imports now always use that connection."
+          : "Zoho org ID saved.",
+      );
+      refreshStatus();
+    } catch (e: any) {
+      const msg = e?.message ?? "save failed";
+      setZohoMsg(
+        /could not find public function|validation error|extra field/i.test(msg)
+          ? "Backend mismatch: the Convex deployment serving this page predates the Zoho update. Run `npx convex deploy`, confirm `saveZohoOrgId` accepts 3 args (`npx convex function-spec`), redeploy the web app, then try again."
+          : msg,
+      );
+    } finally {
+      setBusy(null);
+    }
+  }
+
+  async function handleZohoAuthorize() {
+    if (!user) return;
+    if (!status?.hasKey && !composioKey.trim()) {
+      setZohoMsg("Save your Composio API key above first — Zoho uses the same key.");
+      return;
+    }
+    setBusy("authorize");
+    setZohoMsg("Opening Composio…");
+    try {
+      const res = await fetch("/api/connect/zoho-auth-url", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ composioUser: composioUser.trim() || "default" }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(data?.error ?? `authorize failed (${res.status})`);
+      const url =
+        (typeof data?.redirect_url === "string" && data.redirect_url.trim()) ||
+        (typeof data?.redirectUrl === "string" && data.redirectUrl.trim()) ||
+        "";
+      if (!url) throw new Error("authorize failed (missing redirect_url)");
+      window.open(url, "_blank", "noopener,noreferrer");
+      setZohoMsg("Finish the Zoho sign-in, then press Check Zoho connection.");
+    } catch (e: any) {
+      setZohoMsg(e?.message ?? "authorize failed");
+    } finally {
+      setBusy(null);
+    }
+  }
+
+  async function handleZohoVerify() {
+    if (!user) return;
+    setBusy("verify");
+    setZohoMsg("Checking…");
+    try {
+      const res = await fetch("/api/connect/zoho-auth-url");
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(data?.error ?? `check failed (${res.status})`);
+      setZohoMsg(
+        data.connected
+          ? "Zoho connected — imports use your verified account. Switch to the workbench and press \"Import from Zoho Invoice\"."
+          : data.pendingAccounts > 0
+            ? `${data.pendingAccounts} pending connection(s) — finish the Zoho sign-in, then check again.`
+            : "No Zoho connection yet — press Connect Zoho.",
+      );
+      refreshStatus();
+    } catch (e: any) {
+      setZohoMsg(e?.message ?? "check failed");
+    } finally {
+      setBusy(null);
+    }
+  }
+
   if (!isLoaded) return <div className="mx-auto max-w-6xl px-4 py-12">Loading…</div>;
   if (!user)
     return (
@@ -225,55 +345,39 @@ function ConnectInner() {
         {!provider ? (
           <p className="mt-2 text-sm" style={{ color: "var(--color-muted)" }}>Checking…</p>
         ) : (
-          <div className="mt-2 space-y-2">
-            <div className="flex flex-wrap gap-2">
-              <Badge
-                ok={provider.composioConfigured}
-                label={`Composio key: ${provider.composioConfigured ? "saved" : "missing"}`}
-              />
-              <Badge ok={provider.appIdConfigured} label={`App ID: ${provider.appIdConfigured ? "set" : "missing"}`} />
-              <Badge ok={provider.connected} label={`OneSignal: ${provider.connected ? "connected" : "not connected"}`} />
-            </div>
-            <div className="flex flex-wrap gap-2">
+          <div className="mt-2 space-y-1.5">
+            <div className="flex flex-wrap gap-1.5">
+              <Badge ok={provider.composioConfigured} label={`Composio: ${provider.composioConfigured ? "key saved" : "key missing"}`} />
+              <Badge ok={provider.connected} label={`OneSignal: ${provider.connected ? "connected" : provider.pendingAccounts > 0 ? "pending" : "not connected"}`} />
+              <Badge ok={provider.zoho?.connected ?? false} label={`Zoho: ${provider.zoho?.connected ? "connected" : provider.zoho && provider.zoho.pendingAccounts > 0 ? "pending" : "not connected"}`} />
               {(["email", "sms", "push"] as Channel[]).map((ch) => (
-                <Badge
-                  key={ch}
-                  ok={provider.channels[ch]}
-                  label={`${CHANNEL_LABEL[ch]}: ${provider.channels[ch] ? "ready" : "not ready"}`}
-                />
+                <Badge key={ch} ok={provider.channels[ch]} label={`${CHANNEL_LABEL[ch]}: ${provider.channels[ch] ? "ready" : "—"}`} />
               ))}
             </div>
-            {provider.accountId && (
+            {(provider.accountId || (provider.zoho?.connected && provider.zoho.orgIdConfigured)) && (
               <p className="tnum text-xs" style={{ color: "var(--color-muted)" }}>
-                OneSignal account {provider.accountId}
-                {provider.accountStatus ? ` · ${provider.accountStatus}` : ""}
+                {provider.accountId ? `OneSignal account ${provider.accountId}${provider.accountStatus ? ` · ${provider.accountStatus}` : ""}` : ""}
+                {provider.accountId && provider.zoho?.connected && provider.zoho.orgIdConfigured ? " · " : ""}
+                {provider.zoho?.connected && provider.zoho.orgIdConfigured ? "Zoho org ID set" : ""}
               </p>
             )}
-            {(provider.accountStatus === "ACTIVE_BUT_REJECTED" || Boolean(provider.activeAccounts)) &&
-              provider.activeAccounts !== undefined && (
-                <p className="text-xs" style={{ color: provider.accountStatus === "ACTIVE_BUT_REJECTED" ? "red" : "var(--color-muted)" }}>
-                  {provider.activeAccounts} OneSignal connection(s) found in Composio
-                  {provider.accountStatus === "ACTIVE_BUT_REJECTED"
-                    ? " — none of them was accepted by OneSignal. Reconnect with your OneSignal REST API key (Settings → Keys & IDs → REST API Key), not the App ID. Old, broken connections can be removed in the Composio dashboard."
-                    : " — send uses the first one OneSignal accepts."}
-                </p>
-              )}
-            {provider.probeError && (
-              <p className="text-xs" style={{ color: "red" }}>{provider.probeError}</p>
-            )}
-            {provider.pendingAccounts > 0 && !provider.connected && (
-              <p className="text-xs" style={{ color: "var(--color-muted)" }}>
-                {provider.pendingAccounts} pending connection(s) — finish the OneSignal sign-in, then press Verify.
+            {provider.accountStatus === "ACTIVE_BUT_REJECTED" && (
+              <p className="text-xs" style={{ color: "red" }}>
+                {provider.activeAccounts} OneSignal connection(s) found — none accepted by OneSignal. Reconnect with your OneSignal REST API key (not the App ID). Remove old broken connections in the Composio dashboard.
               </p>
             )}
-            {!provider.connected && !provider.probeError && (
-              <p className="text-xs" style={{ color: "var(--color-muted)" }}>
-                Composio API key + OneSignal App ID → Save → Connect OneSignal → Verify.
+            {(provider.probeError || provider.zoho?.error) && (
+              <p className="text-xs" style={{ color: "red" }}>
+                {provider.probeError ?? provider.zoho?.error}
               </p>
             )}
-            {!provider.connected && provider.envConfigured && (
+            {(!provider.connected || !(provider.zoho?.connected ?? false)) && (
               <p className="text-xs" style={{ color: "var(--color-muted)" }}>
-                Server env keys are set, so sends still work without a Composio connection.
+                {!provider.connected && !(provider.zoho?.connected ?? false)
+                  ? "Composio API key → Save, then Connect OneSignal / Connect Zoho below and Verify."
+                  : !provider.connected
+                    ? "OneSignal not connected — Save the Composio key, then Connect OneSignal + Verify below."
+                    : "Zoho not connected — Connect Zoho below, then use \"Import from Zoho Invoice\" in the workbench."}
               </p>
             )}
           </div>
@@ -375,6 +479,66 @@ function ConnectInner() {
         Your Composio key and OneSignal connection are yours alone — per-owner, never shared. Keys stay server-side and
         sends only ever happen after a human approval.
       </p>
+      <div className="mt-4 rounded-[10px] border p-4" style={{ borderColor: "var(--color-rule-2)" }}>
+        <h2 className="font-semibold" style={{ color: "var(--color-ink)" }}>Zoho Invoice (invoice import source)</h2>
+        <p className="mt-1 text-sm" style={{ color: "var(--color-muted)" }}>
+          Optional — lets the workbench pull your unpaid invoices from Zoho instead of pasting a CSV. Read-only: imports
+          land in the review table; nothing is sent without approval. Uses the same Composio key above.
+        </p>
+        <div className="mt-3 grid gap-3 md:grid-cols-3">
+          <label className="block text-sm" style={{ color: "var(--color-muted)" }}>
+            Zoho organization ID
+            <input
+              type="text"
+              className="mt-1 w-full rounded-md border p-2 font-mono text-sm"
+              style={{ borderColor: "var(--color-rule-2)", color: "var(--color-ink)" }}
+              value={zohoOrgId}
+              onChange={(e) => {
+                setTouchedZohoOrg(true);
+                setZohoOrgId(e.target.value);
+              }}
+              placeholder="Zoho Invoice → org settings → Organization ID"
+              autoComplete="off"
+            />
+          </label>
+        </div>
+        <div className="mt-3 flex flex-wrap gap-2">
+          <button
+            type="button"
+            onClick={handleZohoSaveOrg}
+            disabled={busy !== null}
+            className="hallmark-btn px-4 py-2 text-sm disabled:opacity-50"
+            style={{ borderColor: "var(--color-rule-2)" }}
+          >
+            {busy === "save" ? "Saving…" : "Save org ID"}
+          </button>
+          <button
+            type="button"
+            onClick={handleZohoAuthorize}
+            disabled={busy !== null}
+            className="hallmark-btn hallmark-btn-primary px-4 py-2 text-sm font-semibold disabled:opacity-50"
+          >
+            {busy === "authorize" ? "Opening…" : "Connect Zoho"}
+          </button>
+          <button
+            type="button"
+            onClick={handleZohoVerify}
+            disabled={busy !== null}
+            className="hallmark-btn px-4 py-2 text-sm disabled:opacity-50"
+            style={{ borderColor: "var(--color-rule-2)" }}
+          >
+            {busy === "verify" ? "Checking…" : "Check Zoho connection"}
+          </button>
+        </div>
+        {zohoMsg && (
+          <p className="mt-2 text-sm" style={{ color: "var(--color-ink)" }}>{zohoMsg}</p>
+        )}
+        <p className="mt-3 text-xs" style={{ color: "var(--color-muted)" }}>
+          Zoho OAuth tokens stay in your Composio connected account — this app never sees them. First time? Add the
+          Zoho Invoice toolkit once at app.composio.dev if Connect says it is missing.
+        </p>
+      </div>
+
     </div>
   );
 }

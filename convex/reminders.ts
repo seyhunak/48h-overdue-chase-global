@@ -876,6 +876,7 @@ export const getComposioStatus = query({
       composioVerifiedAt: typeof row?.composioVerifiedAt === "number" ? row.composioVerifiedAt : null,
       hasAppId: Boolean(row?.onesignalAppId),
       onesignalAppId: typeof row?.onesignalAppId === "string" ? row.onesignalAppId : "",
+      zohoOrgId: typeof row?.zohoOrgId === "string" ? row.zohoOrgId : "",
       preferredAccount: {
         whatsapp: typeof pref?.whatsapp === "string" ? pref.whatsapp : null,
         sms: typeof pref?.sms === "string" ? pref.sms : null,
@@ -949,6 +950,40 @@ export const clearComposioConnection = mutation({
       schedulerEnabled: false,
       sendWindowStart: DEFAULT_WINDOW_START,
       sendWindowEnd: DEFAULT_WINDOW_END,
+      updatedAt: now,
+    });
+    return await ctx.db.get(id);
+  },
+});
+
+export const saveZohoOrgId = mutation({
+  // Owner-owned Zoho organization id used for Zoho Invoice imports via Composio.
+  // Also pins the verified connected account so multi-connection owners always
+  // import through the same authorized account — the UI never asks which one.
+  args: { ownerClerkId: v.string(), zohoOrgId: v.string(), zohoAccountId: v.optional(v.string()) },
+  handler: async (ctx: any, args: any) => {
+    const orgId = (args.zohoOrgId ?? "").trim();
+    if (!orgId) throw new Error("zohoOrgId required");
+    if (/\s/.test(orgId)) throw new Error("zohoOrgId must not contain spaces");
+    if (orgId.length > 64) throw new Error("zohoOrgId too long");
+    const accountId = typeof args.zohoAccountId === "string" ? args.zohoAccountId.trim() : "";
+    const now = Date.now();
+    const existing = await getSettingsRow(ctx, args.ownerClerkId);
+    if (existing) {
+      await ctx.db.patch(existing._id, {
+        zohoOrgId: orgId,
+        zohoAccountId: accountId ? accountId : undefined,
+        updatedAt: now,
+      });
+      return await ctx.db.get(existing._id);
+    }
+    const id = await ctx.db.insert("settings", {
+      ownerClerkId: args.ownerClerkId,
+      schedulerEnabled: false,
+      sendWindowStart: DEFAULT_WINDOW_START,
+      sendWindowEnd: DEFAULT_WINDOW_END,
+      zohoOrgId: orgId,
+      ...(accountId ? { zohoAccountId: accountId } : {}),
       updatedAt: now,
     });
     return await ctx.db.get(id);

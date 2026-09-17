@@ -93,6 +93,8 @@ function WorkbenchInner() {
   const [raw, setRaw] = useState("");
   const [selectedInvoiceId, setSelectedInvoiceId] = useState<string | null>(null);
   const [chasedIds, setChasedIds] = useState<string[]>([]);
+  const [zohoBusy, setZohoBusy] = useState(false);
+  const [zohoMsg, setZohoMsg] = useState<string | null>(null);
   // Collapse/expand state for the sequence preview. First step open by default.
   const [openSteps, setOpenSteps] = useState<Record<string, boolean>>({ "pre-due": true });
 
@@ -177,6 +179,58 @@ function WorkbenchInner() {
     setChasedIds([]);
   }
 
+  async function handleZohoImport() {
+    setZohoBusy(true);
+    setZohoMsg(null);
+    try {
+      const res = await fetch("/api/invoices/zoho-import", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({}),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(data?.error ?? `Zoho import failed (${res.status})`);
+      const invoices: Invoice[] = Array.isArray(data?.invoices) ? data.invoices : [];
+      const skipped: { invoiceId: string; reason: string }[] = Array.isArray(data?.skipped) ? data.skipped : [];
+      if (invoices.length === 0) {
+        if (skipped.length === 0) {
+          setZohoMsg("Zoho returned no invoices — check your Zoho org in /connect (org ID is required for multi-org Zoho accounts).");
+        } else {
+          // Distinct skip reasons, most common first — tells the owner exactly
+          // why nothing qualified (e.g. all paid, missing due dates).
+          const counts = new Map<string, number>();
+          for (const s of skipped) {
+            const key = (s?.reason ?? "unknown").slice(0, 60);
+            counts.set(key, (counts.get(key) ?? 0) + 1);
+          }
+          const summary = [...counts.entries()]
+            .sort((a, b) => b[1] - a[1])
+            .slice(0, 3)
+            .map(([reason, n]) => `${reason} ×${n}`)
+            .join("; ");
+          setZohoMsg(`Zoho returned no chaseable invoices — ${skipped.length} skipped (${summary}).`);
+        }
+        return;
+      }
+      // Shape rows exactly like the CSV flow — everything downstream
+      // (validation, credits, sequence preview, sweep) is unchanged.
+      const header = "clientName,invoiceId,amount,currency,dueDate,email";
+      const lines = invoices.map((inv) =>
+        [inv.clientName, inv.invoiceId, String(inv.amount), inv.currency, inv.dueDate, inv.email ?? ""].join(","),
+      );
+      setRaw([header, ...lines].join("\n"));
+      setSelectedInvoiceId(null);
+      setChasedIds([]);
+      setZohoMsg(
+        `Imported ${invoices.length} invoice(s) from Zoho${skipped.length > 0 ? ` (${skipped.length} skipped: paid/draft)` : ""} — review, then press Follow up.`,
+      );
+    } catch (e: any) {
+      setZohoMsg(e?.message ?? "Zoho import failed");
+    } finally {
+      setZohoBusy(false);
+    }
+  }
+
   function toggleStep(key: string) {
     setOpenSteps((prev) => ({ ...prev, [key]: !(prev[key] ?? false) }));
   }
@@ -246,7 +300,19 @@ function WorkbenchInner() {
           >
             Load sample (10 invoices)
           </button>
+          <button
+            type="button"
+            onClick={handleZohoImport}
+            disabled={zohoBusy}
+            className="hallmark-btn rounded-md border px-4 py-2 text-sm font-semibold disabled:opacity-50"
+            style={{ borderColor: "var(--color-rule-2)" }}
+          >
+            {zohoBusy ? "Importing from Zoho…" : "Import from Zoho Invoice"}
+          </button>
         </div>
+        {zohoMsg && (
+          <p className="mt-2 text-sm" style={{ color: "var(--color-ink)" }}>{zohoMsg}</p>
+        )}
         <textarea
           className="mt-3 h-28 w-full rounded-md border p-2 font-mono text-xs"
           placeholder="clientName,invoiceId,amount,currency,dueDate,email&#10;Acme,INV-001,1200,USD,2026-07-01,ap@acme-corp.example"

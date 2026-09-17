@@ -9,9 +9,17 @@ export type OwnerConnectSettings = {
   composioKey: string | null;
   composioUser: string | null;
   onesignalAppId: string | null;
+  zohoOrgId: string | null;
+  zohoAccountId: string | null;
 };
 
-const EMPTY: OwnerConnectSettings = { composioKey: null, composioUser: null, onesignalAppId: null };
+const EMPTY: OwnerConnectSettings = {
+  composioKey: null,
+  composioUser: null,
+  onesignalAppId: null,
+  zohoOrgId: null,
+  zohoAccountId: null,
+};
 
 function clean(value: unknown): string | null {
   return typeof value === "string" && value.trim() ? value.trim() : null;
@@ -29,6 +37,8 @@ export async function loadOwnerConnectSettings(ownerClerkId: string): Promise<Ow
       composioKey: clean(row?.composioKey),
       composioUser: clean(row?.composioUser),
       onesignalAppId: clean(row?.onesignalAppId),
+      zohoOrgId: clean(row?.zohoOrgId),
+      zohoAccountId: clean(row?.zohoAccountId),
     };
   } catch {
     // Best effort: a settings read failure degrades to env-configured mode.

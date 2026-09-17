@@ -3,6 +3,7 @@ import { auth } from "@clerk/nextjs/server";
 import { loadOwnerConnectSettings } from "@/infrastructure/owner-settings";
 import {
   listOneSignalConnections,
+  listZohoConnections,
   isUsableConnectedAccountStatus,
   resolveComposioKey,
   resolveEntityId,
@@ -63,6 +64,34 @@ export async function GET() {
   const appIdConfigured = Boolean(settings.onesignalAppId) || Boolean(process.env.ONESIGNAL_APP_ID?.trim());
   const ready = connected && appIdConfigured;
 
+  // Zoho Invoice status — live Composio probe of the owner's zoho_invoice
+  // connected accounts (same presence-only discipline: no tokens returned).
+  let zohoConnected = false;
+  let zohoPendingAccounts = 0;
+  let zohoActiveAccounts = 0;
+  let zohoAccountId: string | null = null;
+  let zohoError: string | null = null;
+  if (composioConfigured) {
+    const apiKey = settings.composioKey ?? process.env.COMPOSIO_API_KEY ?? "";
+    const entityId = resolveEntityId(settings.composioUser);
+    try {
+      const zohoAccounts = await listZohoConnections(apiKey, entityId);
+      const zohoActive = zohoAccounts.filter((a) => isUsableConnectedAccountStatus(a.status));
+      zohoActiveAccounts = zohoActive.length;
+      zohoPendingAccounts = zohoAccounts.length - zohoActive.length;
+      zohoConnected = zohoActive.length > 0;
+      // Single authoritative account: prefer the owner's pinned connection
+      // (still ACTIVE), else the first ACTIVE one. Never surface a chooser.
+      const pinned = (settings.zohoAccountId ?? "").trim();
+      zohoAccountId =
+        (pinned && zohoActive.some((a) => a.id === pinned) ? pinned : null) ??
+        zohoActive[0]?.id ??
+        null;
+    } catch (e: unknown) {
+      zohoError = e instanceof Error && e.message ? e.message.slice(0, 300) : "zoho probe failed";
+    }
+  }
+
   return NextResponse.json({
     composioConfigured,
     composioUser: settings.composioUser ?? "default",
@@ -77,5 +106,19 @@ export async function GET() {
     probeError,
     toolkit: "ONESIGNAL_REST_API",
     channels: { email: ready, sms: ready, push: ready },
+    zoho: {
+      connected: zohoConnected,
+      // A single authoritative account: the pinned one when saved, else the
+      // first ACTIVE one. The UI never asks the owner to choose.
+      accountId: zohoAccountId,
+      pendingAccounts: zohoPendingAccounts,
+      activeAccounts: zohoActiveAccounts,
+      // Distinct invoice-connection count for display (deduped, invoice
+      // toolkits only — never "4 connections" from unrelated Zoho apps).
+      invoiceAccounts: zohoActiveAccounts,
+      orgIdConfigured: Boolean(settings.zohoOrgId?.trim()),
+      accountPinned: Boolean(settings.zohoAccountId?.trim()),
+      error: zohoError,
+    },
   });
 }
