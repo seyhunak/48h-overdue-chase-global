@@ -142,6 +142,10 @@ export default defineSchema({
     // pinned connected account id. No Zoho credential is ever stored here.
     zohoOrgId: v.optional(v.string()),
     zohoAccountId: v.optional(v.string()),
+    // Per-owner SMS escalation controls (SPEC-sms-controls.md): undefined =
+    // enabled / $2500 default, so pre-migration rows need no backfill.
+    smsEnabled: v.optional(v.boolean()),
+    smsThresholdUsd: v.optional(v.number()),
     preferredAccount: v.optional(
       v.object({
         whatsapp: v.optional(v.string()),
