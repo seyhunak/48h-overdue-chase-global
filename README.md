@@ -61,15 +61,24 @@ npx skills update -y && ./scripts/sync-agent-skills.sh   # refresh pack
 
 - **Source of truth:** `.agents/skills/<name>/SKILL.md` (+ `skills-lock.json`).
   Never edit a skill in place — update via the CLI.
-- **Every agent reads the same pack** via symlinks → `.agents/skills/`:
+- **Every agent reads the same pack** via symlinks → `.agents/skills/`
+  (26 skills: 25 pack + hallmark — full map in `AGENTS.md` §1):
   Claude Code (`.claude/skills/` + `.claude/commands/` for `/spec /plan /build
-  /test /review /ship`), OpenCode (`.opencode/skills/` + `AGENTS.md` intent
-  table), Kilo Code (`.kilo-code/skills/` + `.kilocode-rules`), Cline
+  /test /constraints /review /code-simplify /webperf /ship`), OpenCode
+  (`.opencode/skills/` + `.opencode/commands/` + `AGENTS.md` intent table),
+  Kilo Code (`.kilo-code/skills/` + `.kilocode-rules`), Cline
   (`.cline/skills/` + `.clinerules`), Roo Code (`.roo-code/skills/` +
-  `.roo-code-rules`), Cursor (`.cursor/skills/` + `.cursor/rules/`), Copilot
-  (`.github/skills/` + `copilot-instructions.md` + `.github/prompts/`).
-- **Lifecycle:** `DEFINE (/spec) → PLAN (/plan) → BUILD (/build) → VERIFY
-  (/test) → REVIEW (/review) → SHIP (/ship)` — skill first, even on 1% match.
+  `.roo-code-rules`), Cursor (`.cursor/skills/` + `.cursor/rules/`),
+  Copilot (`.github/skills/` as `/<skill-name>` + `copilot-instructions.md` +
+  `.github/prompts/`).
+- **Lifecycle:** full feature sequence `interview-me → idea-refine →
+  spec-driven-development → planning-and-task-breakdown →
+  context-engineering → incremental-implementation →
+  test-driven-development → debugging-and-error-recovery →
+  code-review-and-quality → git-workflow-and-versioning →
+  shipping-and-launch` (bugfix shortcut: `debugging-and-error-recovery →
+  test-driven-development → code-review-and-quality`) — skill first, even on
+  1% match.
 - **ClearDue invariants** (enforced inside every skill): human approval gate
   (sweep queues `pending_approval`, nothing sends without Approve + Send),
   1 credit/invoice, secrets never committed, `npx tsc --noEmit` + `npm run
