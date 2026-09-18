@@ -283,6 +283,9 @@ src/
  # Lint
  npm run lint
 
+ # Unit tests (Vitest: src/domain + convex/sweepDecide, 30 tests)
+ npm test
+
  # Convex push (dev/preview deployment)
  npx convex dev --once
 
