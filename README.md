@@ -41,6 +41,39 @@ ClearDue is a **48-hour fix-pack** Web SaaS that turns manual follow-up into an 
 | Billing | Stripe (credit-based, $99/100 credits) |
 | Styling | Tailwind + Hallmark (Tally theme) |
 | Architecture | Clean Architecture (domain/application/infrastructure/presentation) |
+| Agent workflow | [addyosmani/agent-skills](https://github.com/addyosmani/agent-skills) — 25 engineering skills + hallmark (spec-driven dev, replaces speckit) |
+
+---
+
+## Agent Skills (how AI agents work in this repo)
+
+> SpecKit / `.specify` is **retired**. The single workflow is
+> [addyosmani/agent-skills](https://github.com/addyosmani/agent-skills),
+> installed project-local via the `skills` CLI. See `AGENTS.md` for the full
+> agent operating guide (intent → skill map, lifecycle, ClearDue invariants).
+
+```bash
+npx skills add addyosmani/agent-skills --all -y   # 25 skills → .agents/skills/
+./scripts/sync-agent-skills.sh                    # re-link every agent dir
+npx skills list                                   # verify (26: 25 pack + hallmark)
+npx skills update -y && ./scripts/sync-agent-skills.sh   # refresh pack
+```
+
+- **Source of truth:** `.agents/skills/<name>/SKILL.md` (+ `skills-lock.json`).
+  Never edit a skill in place — update via the CLI.
+- **Every agent reads the same pack** via symlinks → `.agents/skills/`:
+  Claude Code (`.claude/skills/` + `.claude/commands/` for `/spec /plan /build
+  /test /review /ship`), OpenCode (`.opencode/skills/` + `AGENTS.md` intent
+  table), Kilo Code (`.kilo-code/skills/` + `.kilocode-rules`), Cline
+  (`.cline/skills/` + `.clinerules`), Roo Code (`.roo-code/skills/` +
+  `.roo-code-rules`), Cursor (`.cursor/skills/` + `.cursor/rules/`), Copilot
+  (`.github/skills/` + `copilot-instructions.md` + `.github/prompts/`).
+- **Lifecycle:** `DEFINE (/spec) → PLAN (/plan) → BUILD (/build) → VERIFY
+  (/test) → REVIEW (/review) → SHIP (/ship)` — skill first, even on 1% match.
+- **ClearDue invariants** (enforced inside every skill): human approval gate
+  (sweep queues `pending_approval`, nothing sends without Approve + Send),
+  1 credit/invoice, secrets never committed, `npx tsc --noEmit` + `npm run
+  build` green.
 
 ---
 
@@ -330,7 +363,16 @@ src/
  │   └── middleware.ts         # Clerk protection for /app, /admin, /data
  ├── scripts/
  │   ├── seed-env.sh           # Prompts for keys → .env.local
- │   └── vps-setup.sh          # Fresh-Ubuntu bootstrap (swap, Docker, UFW, nginx)
+ │   ├── vps-setup.sh          # Fresh-Ubuntu bootstrap (swap, Docker, UFW, nginx)
+ │   └── sync-agent-skills.sh  # Re-link all agent skills dirs → .agents/skills
+ ├── .agents/skills/           # Canonical skill pack (25 agent-skills + hallmark)
+ ├── .claude/skills/ .opencode/skills/ .kilo-code/skills/ .cline/skills/
+ │   .cursor/skills/ .github/skills/ .roo-code/skills/  # symlinks → .agents/skills
+ ├── AGENTS.md                 # Agent operating guide (intent → skill map)
+ ├── .claude/commands/         # /spec /plan /build /test /constraints /review /code-simplify /webperf /ship
+ ├── .opencode/commands/       # spec/plan/build/test/review/ship (skill invokers)
+ ├── .cursor/rules/ .clinerules .kilocode-rules .roo-code-rules
+ │   .github/copilot-instructions.md .github/prompts/  # per-agent routers
  ├── deploy/
  │   └── nginx-cleardue.conf   # Reverse-proxy site config
  ├── Dockerfile                # Standalone prod image (1 GB VPS tuned)
