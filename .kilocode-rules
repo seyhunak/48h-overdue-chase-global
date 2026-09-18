@@ -1,0 +1,19 @@
+# ClearDue rules (Kilo Code) — agent-skills workflow, speckit retired
+
+SpecKit / `.specify` is RETIRED. The single workflow is addyosmani/agent-skills
+(25 skills + hallmark). Skills live in `.kilo-code/skills/<name>/SKILL.md`
+(symlinks → `../../.agents/skills/<name>`); canonical source is
+`.agents/skills/` + `skills-lock.json`. Never edit a skill in place — run
+`npx skills update` then `./scripts/sync-agent-skills.sh`.
+
+Lifecycle (skill first, even on 1% match):
+DEFINE → spec-driven-development → PLAN → planning-and-task-breakdown →
+BUILD → incremental-implementation + test-driven-development →
+VERIFY → debugging-and-error-recovery (+ browser-testing-with-devtools for browser issues) →
+REVIEW → code-review-and-quality (+ security-and-hardening / performance-optimization on those axes) →
+SHIP → shipping-and-launch (GO/NO-GO + mandatory rollback plan).
+Unsure which skill → using-agent-skills (router); vague ask → interview-me / idea-refine.
+API/contract → api-and-interface-design. UI → frontend-ui-engineering (+ hallmark for greenfield/audit/redesign).
+Quality bar → constraint-driven-development. Git/PR/release → git-workflow-and-versioning. CI/deploy → ci-cd-and-automation.
+
+ClearDue non-negotiables: human approval gate (sweep queues `pending_approval`, NOTHING sends without Approve + Send), 1 credit/invoice (free 3 on signup), `.env.local` never committed / Composio keys server-side, verify with `npx tsc --noEmit` + `npm run build`, keep domain/application/infrastructure/presentation split.
